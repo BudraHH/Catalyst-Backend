@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- Define properties -->
+    <property name="LOGS_DIR" value="logs" /> <!-- Directory relative to runtime location (e.g., Tomcat's bin) -->
+    <property name="APP_LOG_FILE" value="uvhresolver" />
+
+    <!-- Appender to log to Console -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <!-- Format: Date Level [Thread] LoggerName - Message Newline Exception -->
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n%ex</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Appender to log to a Rolling File -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- Path to the currently active log file -->
+        <file>${LOGS_DIR}/${APP_LOG_FILE}.log</file>
+
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n%ex</pattern>
+        </encoder>
+
+        <!-- Rolling Policy: Defines how files are rotated -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- Daily rollover -->
+            <!-- Pattern for archived files: includes date -->
+            <fileNamePattern>${LOGS_DIR}/${APP_LOG_FILE}.%d{yyyy-MM-dd}.log</fileNamePattern>
+
+            <!-- Keep 30 days' worth of history -->
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+
+        <!-- Example: Size-based triggering (uncomment if you want size AND time rotation) -->
+        <!--
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>10MB</maxFileSize>
+        </triggeringPolicy>
+        -->
+    </appender>
+
+    <!-- ####################################### -->
+    <!-- ##        Configure Log Levels       ## -->
+    <!-- ####################################### -->
+
+    <!-- Set the logging level for YOUR application's packages -->
+    <!-- Use DEBUG for development, INFO or WARN for production -->
+    <logger name="com.budra.uvh" level="DEBUG" additivity="false">
+        <appender-ref ref="STDOUT" />
+        <appender-ref ref="FILE" />
+    </logger>
+
+    <!-- Example: Reduce logging noise from specific libraries -->
+    <logger name="org.glassfish.jersey" level="INFO" additivity="false">
+        <appender-ref ref="STDOUT" />
+        <appender-ref ref="FILE" />
+    </logger>
+    <logger name="org.jvnet.hk2" level="WARN" additivity="false">
+        <appender-ref ref="STDOUT" />
+        <appender-ref ref="FILE" />
+    </logger>
+    <logger name="com.zaxxer.hikari" level="INFO" additivity="false">
+        <appender-ref ref="STDOUT" />
+        <appender-ref ref="FILE" />
+    </logger>
+
+
+    <!-- Root logger: Catches everything not specified above -->
+    <!-- Set the default level for all other logs -->
+    <root level="INFO"> <!-- A common default level -->
+        <appender-ref ref="STDOUT" />
+        <appender-ref ref="FILE" />
+    </root>
+
+</configuration>

@@ -5,7 +5,7 @@
   <modelVersion>4.0.0</modelVersion>
 
   <!-- Project Identification -->
-  <groupId>com.budra.uvh</groupId> <!-- Adjusted GroupId -->
+  <groupId>com.budra.uvh</groupId>
   <artifactId>UVHResolver</artifactId>
   <version>1.0-SNAPSHOT</version>
   <packaging>war</packaging>
@@ -17,29 +17,31 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>11</maven.compiler.source>
     <maven.compiler.target>11</maven.compiler.target>
-    <failOnMissingWebXml>false</failOnMissingWebXml>
-    <!-- Define versions -->
-    <jersey.version>3.1.5</jersey.version> <!-- Ensure this matches your Jersey runtime -->
+    <failOnMissingWebXml>false</failOnMissingWebXml> <!-- Allow no web.xml for modern setups -->
+
+    <!-- Dependency Versions -->
+    <jersey.version>3.1.5</jersey.version>
     <jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
     <jakarta.inject-api.version>2.0.1</jakarta.inject-api.version>
-    <jakarta.cdi-api.version>4.0.1</jakarta.cdi-api.version> <!-- For @RequestScoped -->
+    <jakarta.cdi-api.version>4.0.1</jakarta.cdi-api.version>
     <jakarta.servlet.version>6.0.0</jakarta.servlet.version>
     <jakarta.xml.bind-api.version>4.0.1</jakarta.xml.bind-api.version>
     <jaxb.runtime.version>4.0.4</jaxb.runtime.version>
-    <junit.version>5.10.2</junit.version>
     <postgresql.version>42.7.1</postgresql.version>
+    <hikaricp.version>5.1.0</hikaricp.version>
     <slf4j.version>2.0.11</slf4j.version>
     <logback.version>1.4.14</logback.version>
-    <hikaricp.version>5.1.0</hikaricp.version>
     <jgit.version>6.8.0.202311291450-r</jgit.version>
+    <junit.version>5.10.2</junit.version>
+
     <!-- Maven Plugin Versions -->
-    <maven-war-plugin.version>3.4.0</maven-war-plugin.version>
     <maven-compiler-plugin.version>3.11.0</maven-compiler-plugin.version>
-    <tomcat7-maven-plugin.version>2.2</tomcat7-maven-plugin.version>
+    <maven-war-plugin.version>3.4.0</maven-war-plugin.version>
+    <!-- <tomcat7-maven-plugin.version>2.2</tomcat7-maven-plugin.version> --> <!-- Example if using Tomcat plugin -->
   </properties>
 
   <dependencies>
-    <!-- Jakarta Servlet API (Provided by Tomcat) -->
+    <!-- Jakarta Servlet API (Provided by Servlet Container like Tomcat) -->
     <dependency>
       <groupId>jakarta.servlet</groupId>
       <artifactId>jakarta.servlet-api</artifactId>
@@ -61,7 +63,7 @@
       <version>${jakarta.inject-api.version}</version>
     </dependency>
 
-    <!-- Jakarta CDI API (@RequestScoped, @ApplicationScoped) -->
+    <!-- Jakarta CDI API (@RequestScoped, @ApplicationScoped - Needed by HK2 for these scopes) -->
     <dependency>
       <groupId>jakarta.enterprise</groupId>
       <artifactId>jakarta.enterprise.cdi-api</artifactId>
@@ -74,35 +76,42 @@
       <artifactId>jersey-container-servlet</artifactId>
       <version>${jersey.version}</version>
     </dependency>
-    <!-- Jersey HK2 Injection Manager (for @Inject, AbstractBinder) -->
+    <!-- Jersey HK2 Injection Manager (Provides DI implementation for Jersey) -->
     <dependency>
       <groupId>org.glassfish.jersey.inject</groupId>
       <artifactId>jersey-hk2</artifactId>
       <version>${jersey.version}</version>
     </dependency>
 
-    <!-- Jersey JAX-RS Client (Needed by AuthResource) -->
+
+    <dependency>
+      <groupId>org.glassfish.hk2</groupId>
+      <artifactId>hk2-metadata-generator</artifactId>
+      <version>3.0.4</version>
+    </dependency>
+
+    <!-- Jersey JAX-RS Client (If needed by any component like AuthResource) -->
     <dependency>
       <groupId>org.glassfish.jersey.core</groupId>
       <artifactId>jersey-client</artifactId>
       <version>${jersey.version}</version>
     </dependency>
 
-    <!-- Jersey Multipart Support (Needed for MultiPartFeature) -->
+    <!-- Jersey Multipart Support (For @FormDataParam, file uploads) -->
     <dependency>
       <groupId>org.glassfish.jersey.media</groupId>
       <artifactId>jersey-media-multipart</artifactId>
       <version>${jersey.version}</version>
     </dependency>
 
-    <!-- Jersey Jackson JSON Support (Needed for JacksonFeature) -->
+    <!-- Jersey Jackson JSON Support (For automatic JSON conversion) -->
     <dependency>
       <groupId>org.glassfish.jersey.media</groupId>
       <artifactId>jersey-media-json-jackson</artifactId>
       <version>${jersey.version}</version>
     </dependency>
 
-    <!-- JAXB API and Runtime (Needed by Jersey/Jackson potentially) -->
+    <!-- JAXB API and Runtime (Often required by Jersey/Jackson, especially on JDK 9+) -->
     <dependency>
       <groupId>jakarta.xml.bind</groupId>
       <artifactId>jakarta.xml.bind-api</artifactId>
@@ -112,7 +121,7 @@
       <groupId>org.glassfish.jaxb</groupId>
       <artifactId>jaxb-runtime</artifactId>
       <version>${jaxb.runtime.version}</version>
-      <scope>runtime</scope>
+      <scope>runtime</scope> <!-- Only needed at runtime -->
     </dependency>
 
     <!-- PostgreSQL Database Driver -->
@@ -120,7 +129,7 @@
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
       <version>${postgresql.version}</version>
-      <scope>runtime</scope>
+      <scope>runtime</scope> <!-- Only needed at runtime -->
     </dependency>
 
     <!-- HikariCP Connection Pooling -->
@@ -130,17 +139,18 @@
       <version>${hikaricp.version}</version>
     </dependency>
 
-    <!-- Logging Facade (SLF4j) and Implementation (Logback) -->
+    <!-- Logging Facade (SLF4j) -->
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
       <version>${slf4j.version}</version>
     </dependency>
+    <!-- Logging Implementation (Logback) -->
     <dependency>
       <groupId>ch.qos.logback</groupId>
       <artifactId>logback-classic</artifactId>
       <version>${logback.version}</version>
-      <scope>runtime</scope>
+      <scope>runtime</scope> <!-- Only needed at runtime -->
     </dependency>
 
     <!-- JGit -->
@@ -164,12 +174,17 @@
       <scope>test</scope>
     </dependency>
 
+
+
+
+
   </dependencies>
 
   <!-- Build Configuration -->
   <build>
-    <finalName>${project.artifactId}</finalName>
+    <finalName>${project.artifactId}</finalName> <!-- Output WAR name -->
     <plugins>
+      <!-- Compiler Plugin -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -179,12 +194,26 @@
           <target>${maven.compiler.target}</target>
         </configuration>
       </plugin>
+      <!-- WAR Plugin -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-war-plugin</artifactId>
         <version>${maven-war-plugin.version}</version>
+        <!-- Configuration for web.xml handled by failOnMissingWebXml property -->
       </plugin>
-      <!-- Tomcat plugin commented out -->
+
+      <!-- Optional: Tomcat Plugin for easy local testing -->
+      <!--
+      <plugin>
+          <groupId>org.apache.tomcat.maven</groupId>
+          <artifactId>tomcat7-maven-plugin</artifactId>
+          <version>${tomcat7-maven-plugin.version}</version>
+          <configuration>
+              <path>/${project.build.finalName}</path> // Context path
+              <port>8080</port>
+          </configuration>
+      </plugin>
+      -->
     </plugins>
   </build>
 

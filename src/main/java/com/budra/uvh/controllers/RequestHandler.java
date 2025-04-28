@@ -1,9 +1,8 @@
 package com.budra.uvh.controllers;
 
 // Service and Exception Imports
-import com.budra.uvh.service.LskResolution;
-import com.budra.uvh.exception.LskGenerationException;
-import com.budra.uvh.exception.PlaceholderFormatException;
+import com.budra.uvh.exception.*; // Import all custom exceptions
+import com.budra.uvh.service.GenericLskProcessingService; // Use the generic service
 
 // JAX-RS Imports
 import jakarta.ws.rs.*;
@@ -14,7 +13,7 @@ import jakarta.ws.rs.core.Response;
 import org.glassfish.jersey.media.multipart.FormDataParam;
 
 // DI / Scope Imports
-import jakarta.enterprise.context.RequestScoped; // Or: import org.glassfish.jersey.process.internal.RequestScoped;
+import jakarta.enterprise.context.RequestScoped; // Standard Jakarta EE scope
 import jakarta.inject.Inject;
 
 // Logging Imports
@@ -22,147 +21,154 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 // Java IO Imports
-import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.util.stream.Collectors;
 
-@Path("/logical-seed-key") // Base path for this resource
-@RequestScoped // Explicitly define lifecycle - one instance per HTTP request
+@Path("/lsk") // Base path for this resource
+@RequestScoped // One instance per HTTP request
 public class RequestHandler {
     private static final Logger log = LoggerFactory.getLogger(RequestHandler.class);
 
-    private final LskResolution lskResolution; // Dependency field
+    // --- Dependency Injection ---
+    private final GenericLskProcessingService lskProcessingService;
 
-    // --- Use @Inject for Dependency Injection ---
-    @Inject // Instructs HK2 to inject dependencies when creating an instance
-    public RequestHandler(LskResolution lskResolution) {
-        log.debug("RequestHandler instance created via @Inject constructor (RequestScoped).");
-        if (lskResolution == null) {
-            throw new IllegalStateException("DI framework failed to inject LskResolution");
+    @Inject // Instructs DI container (e.g., HK2) to inject the service
+    public RequestHandler(GenericLskProcessingService lskProcessingService) {
+        log.debug("RequestHandler instance created (@RequestScoped) with injected GenericLskProcessingService.");
+        if (lskProcessingService == null) {
+            // Basic check, DI framework should handle this if configured correctly
+            throw new IllegalStateException("DI framework failed to inject GenericLskProcessingService");
         }
-        this.lskResolution = lskResolution;
+        this.lskProcessingService = lskProcessingService;
     }
 
-    // --- Static Nested Class for Standard JSON Responses ---
-    // (Or move to its own file: e.g., com.budra.uvh.model.ApiResponse.java)
-    // Making it public allows Jackson to access fields easily.
-    public static class ApiResponse {
-        public String message; // Optional success/info message
-        public String data;    // To hold resolved XML or other payload data
-        public String error;   // Optional error message
-
-        // Constructor for success responses
-        public ApiResponse(String message, String data) {
-            this.message = message;
-            this.data = data;
-            this.error = null; // Ensure error is null on success
-        }
-
-        // Constructor for error responses
-        public ApiResponse(String error) {
-            this.message = null; // Ensure message/data are null on error
-            this.data = null;
-            this.error = error;
-        }
-
-        // Static factory methods for convenience
-        public static ApiResponse success(String message, String data) {
-            return new ApiResponse(message, data);
-        }
-
-        public static ApiResponse error(String error) {
-            return new ApiResponse(error);
-        }
-
-        // Default no-arg constructor - Jackson might need this in some cases
-        public ApiResponse() {}
+    // No-arg constructor needed by some frameworks/proxies, but injection constructor is primary
+    public RequestHandler() {
+        this.lskProcessingService = null; // Should be replaced by DI container
+        // Or throw if called directly: throw new IllegalStateException("Default constructor should not be called directly when using DI");
+        log.warn("RequestHandler default constructor called - DI might not be configured correctly if service is null later.");
     }
-    // --- End ApiResponse Definition ---
 
 
     // --- Endpoint for Multipart Upload & JSON Response ---
     @POST
-    @Path("/resolve-upload") // Endpoint path
-    @Consumes(MediaType.MULTIPART_FORM_DATA) // Expects file upload + form fields
+    @Path("/process-xml-upload") // More descriptive path
+    @Consumes(MediaType.MULTIPART_FORM_DATA) // Expects file upload
     @Produces(MediaType.APPLICATION_JSON) // Returns JSON structure (ApiResponse)
-    public Response resolveLskFromUpload(
-            @FormDataParam("repository") String repositoryUrl,
-            @FormDataParam("branch") String branchName,
-            @FormDataParam("relativePath") String relativePath,
-            @FormDataParam("xmlFile") InputStream fileInputStream)
+    public Response processXmlUpload(
+             @FormDataParam("repository") String repositoryUrl, // Keep if needed
+             @FormDataParam("branch") String branchName,       // Keep if needed
+             @FormDataParam("relativePath") String relativePath, // Keep if needed
+             @FormDataParam("xmlFile") InputStream fileInputStream) // The uploaded file stream
     {
-        log.info("Received POST request on /resolve-upload");
-        log.info("Context - Repo: [{}], Branch: [{}], Path: [{}]", repositoryUrl, branchName, relativePath);
-
-        String fileContext = (relativePath != null && !relativePath.isEmpty()) ? relativePath : "uploaded file";
+        String operationId = java.util.UUID.randomUUID().toString().substring(0, 8); // Simple request tracking ID
+        log.info("[{}] Received POST request on /process-xml-upload", operationId);
+        // log.info("[{}] Context - Repo: [{}], Branch: [{}], Path: [{}]", operationId, repositoryUrl, branchName, relativePath); // Log context if params are kept
 
         // --- Input Validation ---
-        if (fileInputStream == null) {
-            log.warn("Missing XML file upload ('xmlFile' form part).");
+        if (repositoryUrl == null){
+            log.warn("[{}] Missing  file upload repository URL.", operationId);
             return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(ApiResponse.error("XML file ('xmlFile') is required.")) // Use factory method
+                    .entity(new ApiResponse("Repository URL is required.")) // Use ApiResponse for consistency
                     .type(MediaType.APPLICATION_JSON)
                     .build();
         }
 
-        String xmlContent;
+        if (branchName == null){
+            log.warn("[{}] Missing  file upload branch name.", operationId);
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(new ApiResponse("Repository branch is required.")) // Use ApiResponse for consistency
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
+        }
+
+        if (relativePath == null){
+            log.warn("[{}] Missing  file relative path.", operationId);
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(new ApiResponse("Relative file path is required.")) // Use ApiResponse for consistency
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
+        }
+
+        if (fileInputStream == null) {
+            log.warn("[{}] Missing XML file upload ('xmlFile' form part).", operationId);
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(new ApiResponse("XML file ('xmlFile') is required.")) // Use ApiResponse for consistency
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
+        }
+
         try {
-            // Read XML content
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(fileInputStream, StandardCharsets.UTF_8))) {
-                xmlContent = reader.lines().collect(Collectors.joining(System.lineSeparator()));
-            } catch (IOException e) {
-                log.error("Error reading uploaded XML file ({}): {}", fileContext, e.getMessage(), e);
-                return Response.status(Response.Status.BAD_REQUEST)
-                        .entity(ApiResponse.error("Failed to read uploaded file content."))
-                        .type(MediaType.APPLICATION_JSON).build();
-            }
-
-            if (xmlContent.trim().isEmpty()) {
-                log.warn("Received empty XML file content for {}", fileContext);
-                return Response.status(Response.Status.BAD_REQUEST)
-                        .entity(ApiResponse.error("Uploaded XML file content cannot be empty."))
-                        .type(MediaType.APPLICATION_JSON).build();
-            }
-
-            // --- Delegate to Service ---
-            log.debug("Processing XML content from {}", fileContext);
-            String resolvedXml = this.lskResolution.processAndResolveXml(xmlContent);
-            log.info("LSK resolution successful for {}", fileContext);
+            // --- Delegate Processing to Service ---
+            // The service now handles parsing, LSK generation, FK resolution, and persistence
+            log.debug("[{}] Delegating processing to GenericLskProcessingService...", operationId);
+            this.lskProcessingService.parseProcessAndPersist(fileInputStream);
+            log.info("[{}] XML processing and persistence completed successfully.", operationId);
 
             // --- Return Success Response (ApiResponse JSON) ---
-            return Response.ok(ApiResponse.success("Resolution successful for " + fileContext, resolvedXml)) // Use factory
+            // Since data is persisted, we usually just return a success message, not the processed data.
+            return Response.ok(new ApiResponse("XML processed and data persisted successfully.", null)) // Success message, no data payload
                     .type(MediaType.APPLICATION_JSON)
                     .build();
 
-        } catch (PlaceholderFormatException e) {
-            log.warn("Placeholder format error during resolution for {}: {}", fileContext, e.getMessage());
-            String errorMsg = "Invalid placeholder format" + (e.getMessage() != null ? ": " + e.getMessage() : ".");
+            // --- Specific Exception Handling ---
+        } catch (XmlParsingException e) {
+            log.warn("[{}] XML Parsing error: {}", operationId, e.getMessage());
             return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(ApiResponse.error(errorMsg)) // Use factory
+                    .entity(new ApiResponse("XML parsing failed" + (e.getMessage() != null ? ": " + e.getMessage() : ".")))
+                    .type(MediaType.APPLICATION_JSON).build();
+        } catch (PlaceholderFormatException e) {
+            log.warn("[{}] Placeholder format error: {}", operationId, e.getMessage());
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(new ApiResponse("Invalid LSK placeholder format" + (e.getMessage() != null ? ": " + e.getMessage() : ".")))
                     .type(MediaType.APPLICATION_JSON).build();
         } catch (LskGenerationException e) {
-            log.error("LSK Generation or DB error during resolution for {}: {}", fileContext, e.getMessage(), e);
-            String errorMsg = "LSK generation failed" + (e.getMessage() != null ? ": " + e.getMessage() : ".");
-            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ApiResponse.error(errorMsg)) // Use factory
+            log.error("[{}] LSK Generation or DB error during processing: {}", operationId, e.getMessage(), e);
+            // Potentially BAD_REQUEST if arguments were invalid, INTERNAL_SERVER_ERROR if DB issue
+            Response.Status status = (e.getCause() instanceof IllegalArgumentException) ? Response.Status.BAD_REQUEST : Response.Status.INTERNAL_SERVER_ERROR;
+            return Response.status(status)
+                    .entity(new ApiResponse("LSK generation failed" + (e.getMessage() != null ? ": " + e.getMessage() : ".")))
                     .type(MediaType.APPLICATION_JSON).build();
-        } catch (Exception e) {
-            log.error("Unexpected internal server error during LSK resolution for {}: {}", fileContext, e.getMessage(), e);
+        } catch (DataPersistenceException e) {
+            log.error("[{}] Data persistence error: {}", operationId, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
-                    .entity(ApiResponse.error("An unexpected internal server error occurred.")) // Use factory
+                    .entity(new ApiResponse("Failed to save data to the database" + (e.getMessage() != null ? ": " + e.getMessage() : ".")))
                     .type(MediaType.APPLICATION_JSON).build();
+        } catch (IllegalStateException e) {
+            // Often indicates logic errors (like FK resolution failure)
+            log.error("[{}] Internal state error during processing: {}", operationId, e.getMessage(), e);
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(new ApiResponse("An internal processing error occurred" + (e.getMessage() != null ? ": " + e.getMessage() : ".")))
+                    .type(MediaType.APPLICATION_JSON).build();
+        }
+        // --- Generic Exception Handling ---
+        catch (Exception e) {
+            // Catch any other unexpected errors
+            log.error("[{}] Unexpected internal server error during processing: {}", operationId, e.getMessage(), e);
+            return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                    .entity(new ApiResponse("An unexpected internal server error occurred."))
+                    .type(MediaType.APPLICATION_JSON).build();
+        } finally {
+            // Clean up the input stream? Jersey might do this, but good practice if handling manually.
+            // Note: InputStream from @FormDataParam is typically managed by Jersey.
+            // try { if (fileInputStream != null) fileInputStream.close(); } catch (IOException ignored) {}
         }
     }
 
-    // --- Optional: XML-in/XML-out endpoint ---
-    /*
-    @POST
-    @Path("/resolve-xml")
-    @Consumes(MediaType.APPLICATION_XML)
-    @Produces(MediaType.APPLICATION_XML)
-    public Response resolveLskXmlInOut(String inputXml) { ... }
-    */
+    // --- Optional: Add other endpoints as needed ---
+
+    // --- Static Nested Class for Standard JSON Responses ---
+    // (Copied from your original code - keep this or move to model package)
+    public static class ApiResponse {
+        public String message;
+        public String data; // Can be used for other endpoints that DO return data
+        public String error;
+
+        public ApiResponse(String message, String data) {
+            this.message = message; this.data = data; this.error = null;
+        }
+        public ApiResponse(String error) {
+            this.message = null; this.data = null; this.error = error;
+        }
+        public ApiResponse() {} // Needed by Jackson sometimes
+    }
 }

@@ -1,7 +1,9 @@
-package com.budra.uvh.dbConfig;
+package com.budra.uvh.config;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import jakarta.inject.Singleton;
+import org.jvnet.hk2.annotations.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,6 +12,10 @@ import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Properties;
+
+
+@Service
+@Singleton
 
 public class ConnectionManager {
     private static final Logger log = LoggerFactory.getLogger(ConnectionManager.class);

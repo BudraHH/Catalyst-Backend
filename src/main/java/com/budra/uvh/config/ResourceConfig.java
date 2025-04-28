@@ -1,54 +1,60 @@
 package com.budra.uvh.config;
 
-// Import your CorsFilter if you intend to register it explicitly
-// import com.budra.uvh.filters.CorsFilter;
-
 import jakarta.ws.rs.ApplicationPath;
 import org.glassfish.jersey.jackson.JacksonFeature;
 import org.glassfish.jersey.media.multipart.MultiPartFeature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-@ApplicationPath("/api") // Defines the base path for all JAX-RS resources
+// --- NOTE: Extends Jersey's ResourceConfig ---
+// This is specific to Jersey implementation of JAX-RS
+@ApplicationPath("/api") // Defines the base path for all JAX-RS resources in this app
 public class ResourceConfig extends org.glassfish.jersey.server.ResourceConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ResourceConfig.class);
 
     public ResourceConfig() {
-        log.info("Initializing JAX-RS ResourceConfig using annotation-based discovery...");
+        log.info("Initializing JAX-RS Application (Jersey ResourceConfig)...");
 
         // --- Package Scanning ---
-        // List ALL packages containing components with JAX-RS (@Path),
-        // Jakarta DI (@Singleton, @RequestScoped, @Inject),
-        // or JAX-RS Provider (@Provider, ExceptionMapper) annotations.
-        packages(
-                "com.budra.uvh.controllers",   // Contains RequestHandler (@Path, @RequestScoped)
-                "com.budra.uvh.git",           // Contains AuthResource (@Path)
-                "com.budra.uvh.service",       // Contains LskResolution (@RequestScoped)
-                "com.budra.uvh.model",         // Contains LskCounterRepository (@Singleton)
-                "com.budra.uvh.filters",       // Contains CorsFilter (@Provider)
-                "com.budra.uvh.exception"      // Contains any ExceptionMappers (@Provider)
-        );
-        // Log the packages being scanned for easier debugging
-        log.info("Scanning packages: com.budra.uvh.controllers, com.budra.uvh.git, com.budra.uvh.service, com.budra.uvh.model, com.budra.uvh.filters, com.budra.uvh.exception");
+        // Tells Jersey where to look for components annotated with JAX-RS
+        // (@Path, @Provider) and Jakarta DI (@Singleton, @RequestScoped, @Inject, etc.)
+        // List ALL relevant base packages. Jersey will scan recursively.
+        final String basePackage = "com.budra.uvh"; // Use the common root package
+        packages(basePackage);
+
+        log.info("Scanning base package for components: {}", basePackage);
+        // You could list individual sub-packages like before, but scanning the
+        // base package is usually sufficient and less error-prone if you add new sub-packages.
+        // packages(
+        //        "com.budra.uvh.controllers",
+        //        "com.budra.uvh.git",
+        //        "com.budra.uvh.service",
+        //        "com.budra.uvh.model",       // Needs LskCounterRepository(@Singleton) and potentially ApiResponse if used directly
+        //        "com.budra.uvh.filters",     // Needs CorsFilter(@Provider)
+        //        "com.budra.uvh.dao",         // Needs GenericDao(@Singleton if applicable)
+        //        "com.budra.uvh.config",      // Needs ConnectionManager(@Singleton)
+        //        "com.budra.uvh.parser",      // Parsers usually don't need DI scope unless they have dependencies
+        //        "com.budra.uvh.exception"    // Needs any ExceptionMappers(@Provider)
+        // );
 
         // --- FEATURE REGISTRATION ---
-        // Register essential Jersey features that configure underlying providers or capabilities.
-        log.info("Registering required Jersey features: MultiPartFeature, JacksonFeature");
-        register(MultiPartFeature.class); // Essential for @FormDataParam and multipart requests
-        register(JacksonFeature.class);   // Essential for automatic JSON marshalling/unmarshalling
+        // Register essential Jersey features
+        log.info("Registering JAX-RS features: JacksonFeature (JSON), MultiPartFeature (File Uploads)");
+        register(JacksonFeature.class);   // Enables automatic JSON marshalling/unmarshalling via Jackson
+        register(MultiPartFeature.class); // Enables handling of multipart/form-data requests (file uploads)
 
-        // --- Explicit Registration (Optional but sometimes clearer) ---
-        // If CorsFilter has @Provider and is in a scanned package, this is optional.
-        // Explicitly registering can sometimes help if scanning fails or for clarity.
-        // register(CorsFilter.class);
-        // log.info("Explicitly registered CorsFilter."); // Uncomment log if you uncomment register
+        // --- Explicit Registration (Usually unnecessary if using @Provider + package scanning) ---
+        // Example: If CorsFilter wasn't found via scanning, you could uncomment this.
+         register(com.budra.uvh.filters.CorsFilter.class);
+         log.debug("Explicitly registered CorsFilter.");
 
-        // AuthResource should be picked up by scanning com.budra.uvh.git because it has @Path
-        // register(AuthResource.class);
+        log.info("Registering AutoScanFeature for HK2 component discovery...");
+        register(AutoScanFeature.class);
+        // Jersey's built-in Dependency Injection (HK2) should automatically find
+        // and manage classes annotated with @Singleton, @RequestScoped, etc., within
+        // the scanned packages. Constructor injection (@Inject) is the preferred way.
 
-        // The AbstractBinder for manual DI has been correctly removed.
-
-        log.info("JAX-RS (Jersey) Application Initialized.");
+        log.info("JAX-RS Application Initialized. Base path: /api");
     }
 }

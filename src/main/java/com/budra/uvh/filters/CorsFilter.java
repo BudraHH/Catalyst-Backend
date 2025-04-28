@@ -1,4 +1,4 @@
-package com.budra.uvh.config; // Or com.budra.uvh.filters
+package com.budra.uvh.filters; // Or com.budra.uvh.filters
 
 import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.container.ContainerResponseContext;

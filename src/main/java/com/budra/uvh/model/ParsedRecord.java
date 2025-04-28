@@ -7,74 +7,41 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Represents a generic record parsed from an XML element.
- * It holds the tag name (used as table name), attributes (used as column data),
- * primary key placeholder information, inferred or explicit foreign key links,
- * and placeholders for resolved key values after processing.
- */
 public class ParsedRecord {
     private static final Logger log = LoggerFactory.getLogger(ParsedRecord.class);
 
-    private final String xmlTagName; // Acts as Table Name by convention
-    private String pkAttributeName;  // Name of the attribute holding the PK placeholder
-    private String pkPlaceholder;    // The actual LSK placeholder string, e.g., "Table:Col:1"
+    private final String xmlTagName;
+    private String pkAttributeName;
+    private String pkPlaceholder;
 
-    // Stores regular attributes (Column Name -> Column Value as String from XML)
-    // Using LinkedHashMap preserves insertion order which might be useful for DAO
-    private final Map<String, String> attributes = new HashMap<>(); // Or LinkedHashMap
+    private final Map<String, String> attributes = new HashMap<>();
 
-    // Stores foreign key definitions before resolution
-    // Key: FK Attribute Name (e.g., "emp_dept_id")
-    // Value: Parent's PK Placeholder String (e.g., "DepartmentInfo:DEPT_ID:3")
-    // This map is populated by the parser based on REF:{} or nesting.
-    private final Map<String, String> foreignKeyLinks = new HashMap<>(); // Or LinkedHashMap
+    private final Map<String, String> foreignKeyLinks = new HashMap<>();
 
-    // --- Populated during Stage 2 (LSK/FK Resolution) ---
     private Long generatedPkValue;
-    // Key: FK Attribute Name, Value: Resolved Parent's generatedPkValue
-    private final Map<String, Long> resolvedForeignKeys = new HashMap<>(); // Or LinkedHashMap
 
+    private final Map<String, Long> resolvedForeignKeys = new HashMap<>();
 
-    /**
-     * Constructs a ParsedRecord associated with a specific XML tag name.
-     * @param xmlTagName The name of the XML element tag, used as the table name convention. Cannot be null.
-     */
     public ParsedRecord(String xmlTagName) {
         this.xmlTagName = Objects.requireNonNull(xmlTagName, "XML Tag Name cannot be null");
     }
 
-    // --- Getters ---
-
-    /** @return The XML tag name, used as the conventional table name. */
     public String getTableName() { return xmlTagName; }
 
-    /** @return The name of the attribute identified as holding the primary key placeholder. */
     public String getPkAttributeName() { return pkAttributeName; }
 
-    /** @return The LSK placeholder string identified for the primary key. */
     public String getPkPlaceholder() { return pkPlaceholder; }
 
-    /** @return A map of regular attribute names to their string values from the XML. */
-    public Map<String, String> getAttributes() { return attributes; } // Consider returning an unmodifiable view
+    public Map<String, String> getAttributes() { return attributes; }
 
-    /** @return A map of foreign key attribute names to the placeholder string of the parent record they link to. */
-    public Map<String, String> getForeignKeyLinks() { return foreignKeyLinks; } // Consider returning an unmodifiable view
+    public Map<String, String> getForeignKeyLinks() { return foreignKeyLinks; }
 
-    /** @return The generated primary key value after LSK resolution (null if not generated or no PK). */
     public Long getGeneratedPkValue() { return generatedPkValue; }
 
-    /** @return A map of foreign key attribute names to the resolved generated ID of the parent record. */
     public Map<String, Long> getResolvedForeignKeys() { return resolvedForeignKeys; } // Consider returning an unmodifiable view
 
     // --- Setters/Adders used by Parser and Service ---
 
-    /**
-     * Sets the primary key information identified during parsing.
-     * Logs a warning if called more than once for the same record.
-     * @param attributeName The name of the attribute holding the PK placeholder.
-     * @param placeholder The LSK placeholder string found in the attribute's value.
-     */
     public void setPrimaryKeyInfo(String attributeName, String placeholder) {
         if (this.pkAttributeName != null && !this.pkAttributeName.equals(attributeName)) {
             // Log or throw if multiple different PK attributes are identified
@@ -153,7 +120,5 @@ public class ParsedRecord {
                 '}';
     }
 
-    // Consider implementing equals() and hashCode() if you store these
-    // objects in Sets or use them as keys in Maps based on their content,
-    // although typically they are processed sequentially in a List.
+
 }

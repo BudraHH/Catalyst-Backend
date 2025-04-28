@@ -15,7 +15,7 @@ import java.util.Properties;
 
 
 @Service
-@Singleton
+//@Singleton
 
 public class ConnectionManager {
     private static final Logger log = LoggerFactory.getLogger(ConnectionManager.class);

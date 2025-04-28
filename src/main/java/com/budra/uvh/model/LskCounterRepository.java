@@ -8,19 +8,9 @@ import org.slf4j.LoggerFactory;
 
 import java.sql.*;
 
-/**
- * Repository responsible for managing persistent counters for Logical Seed Keys (LSKs).
- * Provides atomic operations to retrieve and reserve blocks of sequence values.
- *
- * IMPORTANT: Methods require an active database transaction (autoCommit=false)
- * managed by the calling service layer to ensure atomicity via row locking.
- */
-@Service
-@Singleton // This repository is stateless and suitable for a Singleton scope
 public class LskCounterRepository {
     private static final Logger log = LoggerFactory.getLogger(LskCounterRepository.class);
 
-    // Assumed table and column names - consider making configurable if needed
     private static final String COUNTER_TABLE = "LogicalSeedKeyCounters";
     private static final String TABLE_NAME_COL = "table_name";
     private static final String COLUMN_NAME_COL = "column_name";
@@ -41,9 +31,7 @@ public class LskCounterRepository {
             "INSERT INTO %s (%s, %s, %s, %s) VALUES (?, ?, ?, CURRENT_TIMESTAMP)", // Assumes CURRENT_TIMESTAMP function
             COUNTER_TABLE, TABLE_NAME_COL, COLUMN_NAME_COL, VALUE_COL, UPDATED_TS_COL);
 
-    /**
-     * Public constructor required for DI frameworks to instantiate the Singleton.
-     */
+
     public LskCounterRepository() {
         log.debug("LskCounterRepository instance created (@Singleton).");
     }

@@ -1,57 +1,41 @@
-package com.budra.uvh.filters; // Or com.budra.uvh.filters
+package com.budra.uvh.filters;
 
-import jakarta.ws.rs.container.ContainerRequestContext;
-import jakarta.ws.rs.container.ContainerResponseContext;
-import jakarta.ws.rs.container.ContainerResponseFilter;
-import jakarta.ws.rs.core.Response; // Ensure this Response is jakarta.ws.rs.core.Response
-import jakarta.ws.rs.ext.Provider;
+import jakarta.ws.rs.container.*;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.ext.Provider; // Keep Provider annotation
 import java.io.IOException;
+import org.slf4j.Logger; // Use SLF4j
+import org.slf4j.LoggerFactory;
 
-@Provider
+@Provider // KEEP: Makes it discoverable by package scanning OR explicit registration
 public class CorsFilter implements ContainerResponseFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(CorsFilter.class);
+
+    // Public No-Arg Constructor (Needed by JAX-RS)
+    public CorsFilter() {
+        log.debug("CorsFilter instance created.");
+    }
 
     @Override
     public void filter(ContainerRequestContext requestContext,
                        ContainerResponseContext responseContext) throws IOException {
 
-        String requestOrigin = requestContext.getHeaderString("Origin");
-        String requestMethod = requestContext.getMethod();
+        // Optional logging for debugging
+        // log.trace("CorsFilter executing for path: {}", requestContext.getUriInfo().getPath());
 
-        // Log details for debugging CORS issues
-        // System.out.println("CORS Filter: Request Origin: " + requestOrigin);
-        // System.out.println("CORS Filter: Request Method: " + requestMethod);
-        // System.out.println("CORS Filter: Path: " + requestContext.getUriInfo().getPath());
+        // Add CORS Headers
+        responseContext.getHeaders().add("Access-Control-Allow-Origin", "http://localhost:5174"); // Or read from config
+        responseContext.getHeaders().add("Access-Control-Allow-Credentials", "true");
+        responseContext.getHeaders().add("Access-Control-Allow-Headers", "origin, content-type, accept, authorization, x-requested-with");
+        responseContext.getHeaders().add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD");
 
-        // --- Add headers to the RESPONSE context ---
-        responseContext.getHeaders().add(
-                "Access-Control-Allow-Origin", "http://localhost:5173"); // Allow specific origin
-
-        responseContext.getHeaders().add(
-                "Access-Control-Allow-Credentials", "true"); // Allow credentials
-
-        responseContext.getHeaders().add(
-                "Access-Control-Allow-Headers",
-                "origin, content-type, accept, authorization, x-requested-with"); // Common headers + content-type for JSON/FormData
-
-        responseContext.getHeaders().add(
-                "Access-Control-Allow-Methods",
-                "GET, POST, PUT, DELETE, OPTIONS, HEAD"); // Allowed methods
-
-        // --- Handle OPTIONS preflight requests ---
-        // The browser sends OPTIONS before non-simple requests (like POST with custom headers or non-standard Content-Type)
-        if ("OPTIONS".equalsIgnoreCase(requestMethod)) {
-            System.out.println("CORS Filter: Handling OPTIONS preflight request");
-            // For OPTIONS, we just need to return the allowed methods/headers/origin.
-            // Setting status to OK allows the browser to proceed with the actual request.
+        // Handle Preflight OPTIONS requests
+        if ("OPTIONS".equalsIgnoreCase(requestContext.getMethod())) {
+            log.debug("CorsFilter handling OPTIONS preflight request for path: {}", requestContext.getUriInfo().getPath());
             responseContext.setStatus(Response.Status.OK.getStatusCode());
-            // IMPORTANT: Stop further processing for OPTIONS requests in the filter chain
-            // by not necessarily proceeding to the resource method. Setting the status
-            // and returning is often enough for the browser preflight check.
-            // However, the JAX-RS implementation might handle this implicitly after headers are set.
-            // Explicitly returning OK status is the standard practice.
+            // Optional: Abort request chain for OPTIONS if needed, but often just setting headers/status is enough
+            // requestContext.abortWith(Response.ok().build());
         }
-
-        // Debugging: Log response headers being added
-        // System.out.println("CORS Filter: Response Headers Added: " + responseContext.getHeaders());
     }
 }

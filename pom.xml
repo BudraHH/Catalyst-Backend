@@ -175,9 +175,11 @@
     </dependency>
 
 
-
-
-
+    <dependency>
+      <groupId>org.mindrot</groupId>
+      <artifactId>jbcrypt</artifactId>
+      <version>0.4</version> <!-- Or a more recent compatible version -->
+    </dependency>
   </dependencies>
 
   <!-- Build Configuration -->

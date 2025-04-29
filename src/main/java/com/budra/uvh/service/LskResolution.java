@@ -25,7 +25,7 @@ public class LskResolution {
 
     // SQL statement to insert the consolidated log entry for a processed range
     private static final String INSERT_LOG_SQL =
-            "INSERT INTO LskResolutionLog (dev_email, table_name, column_name, start_value, end_value) VALUES (?, ?, ?, ?, ?)";
+            "INSERT INTO LskResolutionLog (dev_email, table_name, column_name, module_name, start_value, end_value) VALUES (?, ?, ?, ?, ?, ?)";
 
     // Constructor uses the correct repository type
     public LskResolution(LskRepository lskRepository) {
@@ -36,25 +36,16 @@ public class LskResolution {
         this.lskRepository = lskRepository;
     }
 
-    // --- REPLACED record with class for Java < 16 compatibility ---
-    /**
-     * Internal helper class for the Map Key used in tracking ranges.
-     * Implements equals() and hashCode() based on tableName and columnName
-     * to function correctly as a key in HashMap.
-     */
     private static final class RangeKey {
         private final String tableName;
         private final String columnName;
+        private final String moduleName;
 
-        public RangeKey(String tableName, String columnName) {
-            // Consider adding null checks here if necessary, though parsing logic should prevent nulls
+        public RangeKey(String tableName, String columnName, String moduleName) {
             this.tableName = tableName;
             this.columnName = columnName;
+            this.moduleName = moduleName;
         }
-
-        // Getters might be useful but not strictly necessary for map key usage
-        // public String getTableName() { return tableName; }
-        // public String getColumnName() { return columnName; }
 
         @Override
         public boolean equals(Object o) {
@@ -62,12 +53,13 @@ public class LskResolution {
             if (o == null || getClass() != o.getClass()) return false;
             RangeKey rangeKey = (RangeKey) o;
             return Objects.equals(tableName, rangeKey.tableName) &&
-                    Objects.equals(columnName, rangeKey.columnName);
+                    Objects.equals(columnName, rangeKey.columnName) &&
+                    Objects.equals(moduleName, rangeKey.moduleName);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(tableName, columnName);
+            return Objects.hash(tableName, columnName, moduleName);
         }
 
         // Optional: toString for better debugging
@@ -76,32 +68,32 @@ public class LskResolution {
             return "RangeKey{" +
                     "tableName='" + tableName + '\'' +
                     ", columnName='" + columnName + '\'' +
+                    ", moduleName='" + moduleName + '\'' +
                     '}';
         }
     }
-    // --- END replacement for record ---
-
-
-    // Internal helper class to track range details processed within one request execution.
     private static class RangeInfo {
-        long firstValue;   // The first value assigned to this key in this request
-        long lastValue;    // The *last* value assigned to this key in this request
-        String tableName;  // Table name (cached for logging)
-        String columnName; // Column name (cached for logging)
+        long firstValue;
+        long lastValue;
+        String tableName;
+        String columnName;
+        String moduleName;
 
-        RangeInfo(long initialValue, String table, String column) {
+        RangeInfo(long initialValue, String table, String column, String module) {
             this.firstValue = initialValue;
-            this.lastValue = initialValue; // Initially, first and last are the same
+            this.lastValue = initialValue;
             this.tableName = table;
             this.columnName = column;
+            this.moduleName = module;
         }
-        // Setter needed to update the last value as more placeholders for the same key are processed
+
         public void setLastValue(long lastValue) { this.lastValue = lastValue; }
-        // Getters used by the logging method
+
         public long getFirstValue() { return firstValue; }
         public long getLastValue() { return lastValue; }
         public String getTableName() { return tableName; }
         public String getColumnName() { return columnName; }
+        public String getModuleName() { return moduleName; }
     }
 
 
@@ -115,7 +107,7 @@ public class LskResolution {
             throw new IllegalArgumentException("Repository, DevEmail, and InputXML must not be null or empty.");
         }
 
-        // --- Stage 1: Find Placeholders ---
+        // --- Find Placeholders ---
         Set<String> uniquePkPlaceholders = XmlUtils.findUniquePkPlaceholders(inputXml);
         Map<String, String> fkReferences = XmlUtils.findFkReferences(inputXml);
         if (uniquePkPlaceholders.isEmpty() && fkReferences.isEmpty()) {
@@ -125,7 +117,7 @@ public class LskResolution {
         log.info("Found {} unique PK placeholders and {} unique FK references for user {}",
                 uniquePkPlaceholders.size(), fkReferences.size(), devEmail);
 
-        // --- Stage 2: Resolve Primary Keys (LSKs) ---
+        // --- Resolve Primary Keys ---
         Map<String, String> pkResolutionMap = new HashMap<>(); // For XML replacement map
         Map<RangeKey, RangeInfo> rangesProcessed = new HashMap<>(); // For consolidated logging map
 
@@ -135,7 +127,7 @@ public class LskResolution {
         if (!uniquePkPlaceholders.isEmpty()) {
             try {
                 connection = ConnectionManager.getConnection();
-                connection.setAutoCommit(false); // Start database transaction
+                connection.setAutoCommit(false);
                 log.debug("DB transaction started for LSK generation.");
 
                 // Tracks the *next* sequential value to assign for a given prefix *within this transaction*.
@@ -145,38 +137,41 @@ public class LskResolution {
                 for (String pkPlaceholder : uniquePkPlaceholders) {
                     String tableName;
                     String columnName;
+                    String moduleName;
+
                     // Parse "Table:Column:LogicalId" format
                     try {
-                        String[] parts = pkPlaceholder.split(":", 3);
-                        if (parts.length < 3 || parts[0].isEmpty() || parts[1].isEmpty()) {
+                        String[] parts = pkPlaceholder.split(":", 4);
+                        if (parts.length < 4 || parts[0].isEmpty() || parts[1].isEmpty() || parts[2].isEmpty()) {
                             throw new PlaceholderFormatException("Invalid PK format: " + pkPlaceholder);
                         }
                         tableName = parts[0];
                         columnName = parts[1];
+                        moduleName = parts[2];
                     } catch (Exception e) {
                         throw new PlaceholderFormatException("Error parsing PK placeholder: " + pkPlaceholder, e);
                     }
 
                     // Use the RangeKey class (instead of record)
-                    RangeKey currentKey = new RangeKey(tableName, columnName);
+                    RangeKey currentKey = new RangeKey(tableName, columnName, moduleName);
                     long valueToAssign; // The specific LSK value for *this* placeholder instance
 
                     // Determine the next value for this table/column prefix
                     if (nextValueTracker.containsKey(currentKey)) {
                         // Use the next value already tracked for this prefix within this transaction
                         valueToAssign = nextValueTracker.get(currentKey);
-                        log.trace("Using tracked next value {} for {}:{}", valueToAssign, tableName, columnName);
+                        log.trace("Using tracked next value {} for {}:{}:{}", valueToAssign, tableName, columnName, moduleName);
                     } else {
                         // First time for this prefix in this transaction: query the DB for the starting point
-                        log.debug("Requesting initial starting value via LskRepository for {}:{} (User: {})", tableName, columnName, devEmail);
-                        valueToAssign = this.lskRepository.getNextStartingValue(connection, tableName, columnName);
+                        log.debug("Requesting initial starting value via LskRepository for {}:{}:{} (User: {})", tableName, columnName, moduleName, devEmail);
+                        valueToAssign = this.lskRepository.getNextStartingValue(connection, tableName, columnName,moduleName);
                         log.trace("Received initial starting value {} for {}:{}", valueToAssign, tableName, columnName);
                     }
 
                     // Track the range details (first/last values) for consolidated logging
                     if (!rangesProcessed.containsKey(currentKey)) {
                         // First time using this prefix in this request. Create a new RangeInfo object.
-                        rangesProcessed.put(currentKey, new RangeInfo(valueToAssign, tableName, columnName));
+                        rangesProcessed.put(currentKey, new RangeInfo(valueToAssign, tableName, columnName, moduleName));
                         log.trace("Tracking new range for {}:{}, starting at {}", tableName, columnName, valueToAssign);
                     } else {
                         // Already tracking this prefix. Update the 'lastValue' for this range.
@@ -197,7 +192,7 @@ public class LskResolution {
                 // --- Stage 2.5: Log Consolidated Ranges ---
                 log.info("Logging consolidated ranges to LskResolutionLog for user {}...", devEmail);
                 for (RangeInfo range : rangesProcessed.values()) {
-                    logConsolidatedResolution(connection, devEmail, range.getTableName(), range.getColumnName(), range.getFirstValue(), range.getLastValue());
+                    logConsolidatedResolution(connection, devEmail, range.getTableName(), range.getColumnName(), range.getModuleName(), range.getFirstValue(), range.getLastValue());
                 }
                 log.info("Finished logging consolidated ranges.");
 
@@ -224,7 +219,7 @@ public class LskResolution {
             log.info("No PK placeholders found to resolve for user {}.", devEmail);
         }
 
-        // --- Stage 3: Resolve Foreign Keys ---
+        // --- Resolve Foreign Keys ---
         Map<String, String> finalReplacements = new HashMap<>(pkResolutionMap);
         if (!fkReferences.isEmpty()) {
             log.debug("Resolving {} FK references for user {}...", fkReferences.size(), devEmail);
@@ -238,7 +233,7 @@ public class LskResolution {
         } else { log.debug("No FK references found for user {}.", devEmail); }
 
 
-        // --- Stage 4: Perform XML Replacements ---
+        // --- Perform XML Replacements ---
         log.info("Performing final XML replacements for user {}...", devEmail);
         String resolvedXml = XmlUtils.replaceAllPlaceholders(inputXml, finalReplacements);
 
@@ -249,13 +244,17 @@ public class LskResolution {
 
 
     // --- Private Helper Method to Insert CONSOLIDATED Log Record ---
-    private void logConsolidatedResolution(Connection conn, String email, String table, String column, long startVal, long endVal)
+    private void logConsolidatedResolution(Connection conn, String email, String table, String column, String module, long startVal, long endVal)
             throws SQLException {
         // (Implementation identical to previous answer - performs the INSERT)
-        log.debug("Logging consolidated LSK range: User={}, Table={}, Column={}, Range=[{}-{}]", email, table, column, startVal, endVal);
+        log.debug("Logging consolidated LSK range: User={}, Table={}, Column={}, Module={}, Range=[{}-{}]", email, table, column, module, startVal, endVal);
         try (PreparedStatement logStatement = conn.prepareStatement(INSERT_LOG_SQL)) {
-            logStatement.setString(1, email); logStatement.setString(2, table); logStatement.setString(3, column);
-            logStatement.setLong(4, startVal); logStatement.setLong(5, endVal);
+            logStatement.setString(1, email);
+            logStatement.setString(2, table);
+            logStatement.setString(3, column);
+            logStatement.setString(4,module);
+            logStatement.setLong(5, startVal);
+            logStatement.setLong(6, endVal);
             int rowsAffected = logStatement.executeUpdate();
             if (rowsAffected != 1) { log.error("Failed to insert consolidated log record! Rows affected: {}", rowsAffected); throw new SQLException("Failed log insert, rows affected: " + rowsAffected); }
             log.trace("Successfully inserted consolidated log record for {}:{}.", table, column);

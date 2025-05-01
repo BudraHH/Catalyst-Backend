@@ -1,102 +1,119 @@
 package com.budra.uvh.utils;
 
 import com.budra.uvh.exception.PlaceholderFormatException;
-// Removed unused ReferenceResolutionException import from this file
-// import com.budra.uvh.exception.ReferenceResolutionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.*; // Keep Set, Map, HashMap, HashSet
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-// Removed unused Collectors import
-// import java.util.stream.Collectors;
 
 public class XmlUtils {
     private static final Logger log = LoggerFactory.getLogger(XmlUtils.class);
 
-    private static final Pattern LSK_ATTRIBUTE_PATTERN = Pattern.compile(
-            // Attr Name =   " ( Full Placeholder String                                   ) "
-            "([a-zA-Z_]+)\\s*=\\s*\"(([a-zA-Z_]+):([a-zA-Z_]+):([a-zA-Z_]+):([^\"\\s:]+))\""
-            //                    Table Name : Column Name: Module Name: LogicalId (anything not quote, space, or colon)
+    // Regex to find an opening or self-closing tag containing an LSK placeholder attribute.
+    // Assumptions: Simple XML structure, placeholder attribute is in opening tag, attribute values don't contain '>'.
+    // Group 1: The full opening or self-closing tag string (e.g., <DepartmentInfo dept_id="..." dept_name="..."/>)
+    // Group 2: Tag name (e.g., DepartmentInfo)
+    // Group 3: The full PK placeholder string (e.g., DepartmentInfo:DEPT_ID:ORG:DEPT_A)
+    // Group 4: Table Name (e.g., DepartmentInfo)
+    // Group 5: Column Name (e.g., DEPT_ID)
+    // Group 6: Module Name (e.g., ORG)
+    // Group 7: Logical ID (e.g., DEPT_A)
+    private static final Pattern ELEMENT_WITH_LSK_PATTERN = Pattern.compile(
+            "(<"                                // Start of opening tag <
+                    + "([\\w_:-]+)"                     // Group 2: Tag Name (allow letters, numbers, _, :, -)
+                    + "\\s+"                            // At least one space after tag name
+                    + "[^>]*?"                          // Any characters except > (non-greedy) - preceding attributes
+                    + "[\\w_:-]+\\s*=\\s*\""            // An attribute name = "
+                    + "(([a-zA-Z_]+):([a-zA-Z_]+):([a-zA-Z_]+):([^\"\\s:]+))" // Group 3 PK placeholder, 4 Tbl, 5 Col, 6 Mod, 7 LogId
+                    + "\""                              // Closing quote of the placeholder attribute
+                    + "[^>]*?"                          // Any characters except > (non-greedy) - subsequent attributes
+                    + "/?>"                             // Closing /> or >
+                    + ")"                               // End of Group 1 (full tag capture)
+            , Pattern.CASE_INSENSITIVE          // Ignore case for tag/attribute names if desired
     );
 
-     private static final Pattern REF_ATTRIBUTE_PATTERN = Pattern.compile(
-            // Attr Name =   " ( REF:{ Target Placeholder String                    } ) "
+
+    // Pattern to find the REF placeholder attribute remains the same
+    private static final Pattern REF_ATTRIBUTE_PATTERN = Pattern.compile(
             "([a-zA-Z_]+)\\s*=\\s*\"(REF:\\{([a-zA-Z_]+:[a-zA-Z_]+:[a-zA-Z_]+:[^\"\\s:{}]+)\\})\""
-            //                         Table Name:Column Name:Module Name:LogicalId (inside braces)
     );
 
-    public static Set<String> findUniquePkPlaceholders(String xmlContent) throws PlaceholderFormatException {
-        Set<String> uniquePks = new HashSet<>();
+    /**
+     * Finds unique PK placeholders and maps them to the list of full XML opening/self-closing
+     * tag strings where they were found.
+     *
+     * @param xmlContent The input XML string.
+     * @return A Map where Key = PK Placeholder String (Table:Column:Module:LogicalId),
+     *         Value = List of full XML element tag strings (<Tag ... attr="Placeholder" ... /> or <Tag ... attr="Placeholder" ... >)
+     *         containing that placeholder. List might be empty if element capture failed.
+     * @throws PlaceholderFormatException If an invalid placeholder format is detected.
+     */
+    public static Map<String, List<String>> findPkPlaceholdersWithElements(String xmlContent) throws PlaceholderFormatException {
+        Map<String, List<String>> pkElementMap = new HashMap<>();
         if (xmlContent == null || xmlContent.trim().isEmpty()) {
-            return uniquePks;
+            return pkElementMap;
         }
 
-        Matcher matcher = LSK_ATTRIBUTE_PATTERN.matcher(xmlContent);
-        log.debug("Scanning XML for 4-part PK placeholders...");
+        Matcher matcher = ELEMENT_WITH_LSK_PATTERN.matcher(xmlContent);
+        log.debug("Scanning XML for elements containing 4-part PK placeholders...");
+
         while (matcher.find()) {
             try {
-                // --- Corrected Group Numbers ---
-                // Group 0 is the whole match, e.g., attr="Table:Col:Mod:Log"
-                // Group 1 is the attribute name, e.g., attr
-                String fullPkPlaceholder = matcher.group(2); // The full Table:Col:Module:LogId
-                String tableName = matcher.group(3);
-                String columnName = matcher.group(4);
-                String moduleName = matcher.group(5);
-                String logicalId = matcher.group(6);
-                // --- Updated Validation ---
-                if (tableName == null || tableName.trim().isEmpty() ||
-                        columnName == null || columnName.trim().isEmpty() ||
-                        moduleName == null || moduleName.trim().isEmpty() || // <<< Added check for moduleName
-                        logicalId == null || logicalId.trim().isEmpty()) {
-                    throw new PlaceholderFormatException("Invalid PK placeholder structure (missing parts): " + matcher.group(0));
+                String fullElementTag = matcher.group(1);       // The captured <Element ... /> or <Element ... >
+                String tagName = matcher.group(2);            // The element's tag name
+                String fullPkPlaceholder = matcher.group(3);    // The full Table:Col:Module:LogId
+                String tableName = matcher.group(4);
+                String columnName = matcher.group(5);
+                String moduleName = matcher.group(6);
+                String logicalId = matcher.group(7);
+
+                // Basic validation on extracted placeholder parts (can be enhanced)
+                if (tableName == null || tableName.isEmpty() || columnName == null || columnName.isEmpty() ||
+                        moduleName == null || moduleName.isEmpty() || logicalId == null || logicalId.isEmpty()) {
+                    // This shouldn't happen if the regex matched correctly, but good safety check
+                    log.warn("Regex matched element but placeholder parts seem invalid: {}", fullElementTag);
+                    throw new PlaceholderFormatException("Invalid PK placeholder structure detected within regex match: " + fullPkPlaceholder);
                 }
 
-                uniquePks.add(fullPkPlaceholder);
-                log.trace("Found PK placeholder instance: {}", fullPkPlaceholder);
+                // Add the found element tag to the list associated with this placeholder
+                // computeIfAbsent ensures the list is created if it's the first time seeing this placeholder
+                pkElementMap.computeIfAbsent(fullPkPlaceholder, k -> new ArrayList<>()).add(fullElementTag);
 
-            } catch (IndexOutOfBoundsException | IllegalArgumentException e) {
-                // Catch potential regex group errors or internal validation issues
-                log.error("Error parsing PK placeholder match: {}", matcher.group(0), e);
-                throw new PlaceholderFormatException("Error parsing PK placeholder structure near: '" + matcher.group(0) + "'", e);
+                log.trace("Found PK placeholder '{}' within element tag: {}", fullPkPlaceholder, fullElementTag.length() > 100 ? fullElementTag.substring(0, 100) + "..." : fullElementTag);
+
+            } catch (Exception e) { // Catch regex group errors or other unexpected issues
+                log.error("Error parsing PK placeholder/element match: {}", matcher.group(0), e);
+                // Decide if processing should continue or fail completely
+                throw new PlaceholderFormatException("Error processing PK placeholder structure near element match: '" + matcher.group(0) + "'", e);
             }
         }
-        log.debug("Found {} unique PK placeholders.", uniquePks.size());
-        return uniquePks;
+        log.debug("Finished PK element scan. Found {} unique placeholders mapped to element lists.", pkElementMap.size());
+        return pkElementMap;
     }
 
+    // findFkReferences remains unchanged as it only needs the attribute value mapping
     public static Map<String, String> findFkReferences(String xmlContent) throws PlaceholderFormatException {
         Map<String, String> fkReferences = new HashMap<>(); // FullRefString -> TargetPKString
         if (xmlContent == null || xmlContent.trim().isEmpty()) {
             return fkReferences;
         }
-
         Matcher matcher = REF_ATTRIBUTE_PATTERN.matcher(xmlContent);
         log.debug("Scanning XML for 4-part FK references...");
         while (matcher.find()) {
             try {
-                String fullRefString = matcher.group(2);
-                String targetPkPlaceholder = matcher.group(3);
-                // --- Updated Validation for 4 parts ---
+                String fullRefString = matcher.group(2); // REF:{Target}
+                String targetPkPlaceholder = matcher.group(3); // Target
                 String[] parts = targetPkPlaceholder.split(":");
-                // Check for exactly 4 non-empty parts after splitting by colon
-                if (parts.length != 4 ||
-                        parts[0].trim().isEmpty() || // Table
-                        parts[1].trim().isEmpty() || // Column
-                        parts[2].trim().isEmpty() || // Module
-                        parts[3].trim().isEmpty()) { // LogicalId
+                if (parts.length != 4 || parts[0].isEmpty() || parts[1].isEmpty() || parts[2].isEmpty() || parts[3].isEmpty()) {
                     throw new PlaceholderFormatException("Invalid target PK placeholder format inside REF (expected 4 parts): " + targetPkPlaceholder);
                 }
-
-                // Store the mapping if not already present
                 if (!fkReferences.containsKey(fullRefString)) {
                     fkReferences.put(fullRefString, targetPkPlaceholder);
                     log.trace("Found FK reference: '{}' targeting PK '{}'", fullRefString, targetPkPlaceholder);
                 }
-
-            } catch (IndexOutOfBoundsException | IllegalArgumentException e) {
-                // Catch potential regex group errors or internal validation issues
+            } catch (Exception e) {
                 log.error("Error parsing FK reference match: {}", matcher.group(0), e);
                 throw new PlaceholderFormatException("Error parsing FK reference structure near: '" + matcher.group(0) + "'", e);
             }
@@ -105,41 +122,31 @@ public class XmlUtils {
         return fkReferences;
     }
 
+    // replaceAllPlaceholders remains unchanged as it replaces attribute values
     public static String replaceAllPlaceholders(String xmlContent, Map<String, String> finalReplacements) {
         String currentContent = xmlContent;
         if (xmlContent == null || finalReplacements == null || finalReplacements.isEmpty()) {
-            return xmlContent; // Nothing to replace
+            return xmlContent;
         }
-
         log.debug("Starting final placeholder replacement phase...");
         int replacementsMade = 0;
-
-        // Iterate through the final map of replacements
         for (Map.Entry<String, String> entry : finalReplacements.entrySet()) {
-            String originalPlaceholder = entry.getKey(); // Can be "Table:Col:Mod:LogId" or "REF:{Table:Col:Mod:LogId}"
-            String resolvedLsk = entry.getValue();       // Should be "Table:Col:Value"
-
-            // Replace the placeholder when it appears inside attribute quotes.
+            String originalPlaceholder = entry.getKey();
+            String resolvedLsk = entry.getValue();
             String placeholderInQuotes = "\"" + originalPlaceholder + "\"";
             String resolvedInQuotes = "\"" + resolvedLsk + "\"";
-
             String beforeReplacement = currentContent;
-
             currentContent = currentContent.replace(placeholderInQuotes, resolvedInQuotes);
-
             if (!beforeReplacement.equals(currentContent)) {
-                replacementsMade++; // Count distinct replacement keys processed
+                replacementsMade++;
                 log.trace("Replaced '{}' with '{}'", placeholderInQuotes, resolvedInQuotes);
             } else {
-                // This warning might occur if the exact quoted string wasn't found.
                 log.warn("String replacement did not find exact match for attribute value: {}", placeholderInQuotes);
             }
         }
-
         log.debug("Finished replacement phase. Processed {} replacement mappings.", replacementsMade);
         return currentContent;
     }
 
-    // Private constructor for utility class
     private XmlUtils() {}
 }

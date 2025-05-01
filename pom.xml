@@ -15,12 +15,13 @@
   <!-- Dependency Versions and Build Properties -->
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.source>11</maven.compiler.source>
+    <maven.compiler.source>11</maven.compiler.source> <!-- Ensure this matches your Java version -->
     <maven.compiler.target>11</maven.compiler.target>
     <failOnMissingWebXml>false</failOnMissingWebXml> <!-- Allow no web.xml for modern setups -->
 
     <!-- Dependency Versions -->
-    <jersey.version>3.1.5</jersey.version>
+    <jersey.version>3.1.5</jersey.version> <!-- Using a recent Jersey 3 version -->
+    <jackson.version>2.15.3</jackson.version> <!-- Jackson version -->
     <jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
     <jakarta.inject-api.version>2.0.1</jakarta.inject-api.version>
     <jakarta.cdi-api.version>4.0.1</jakarta.cdi-api.version>
@@ -31,13 +32,14 @@
     <hikaricp.version>5.1.0</hikaricp.version>
     <slf4j.version>2.0.11</slf4j.version>
     <logback.version>1.4.14</logback.version>
-    <jgit.version>6.8.0.202311291450-r</jgit.version>
+    <jgit.version>6.8.0.202311291450-r</jgit.version> <!-- Keep if needed -->
+    <bcrypt.version>0.4</bcrypt.version> <!-- jBCrypt version -->
     <junit.version>5.10.2</junit.version>
 
     <!-- Maven Plugin Versions -->
     <maven-compiler-plugin.version>3.11.0</maven-compiler-plugin.version>
     <maven-war-plugin.version>3.4.0</maven-war-plugin.version>
-    <!-- <tomcat7-maven-plugin.version>2.2</tomcat7-maven-plugin.version> --> <!-- Example if using Tomcat plugin -->
+    <!-- <tomcat7-maven-plugin.version>2.2</tomcat7-maven-plugin.version> -->
   </properties>
 
   <dependencies>
@@ -54,6 +56,7 @@
       <groupId>jakarta.ws.rs</groupId>
       <artifactId>jakarta.ws.rs-api</artifactId>
       <version>${jakarta.ws.rs-api.version}</version>
+      <!-- Scope might need to be provided if container includes it -->
     </dependency>
 
     <!-- Jakarta Dependency Injection API (@Inject, @Singleton) -->
@@ -68,6 +71,7 @@
       <groupId>jakarta.enterprise</groupId>
       <artifactId>jakarta.enterprise.cdi-api</artifactId>
       <version>${jakarta.cdi-api.version}</version>
+      <!-- Scope might need to be provided -->
     </dependency>
 
     <!-- Jersey JAX-RS Implementation (Server-side) -->
@@ -83,32 +87,46 @@
       <version>${jersey.version}</version>
     </dependency>
 
-
+    <!-- HK2 Metadata Generator (Often needed for annotation scanning with HK2) -->
     <dependency>
       <groupId>org.glassfish.hk2</groupId>
       <artifactId>hk2-metadata-generator</artifactId>
-      <version>3.0.4</version>
+      <version>3.0.4</version> <!-- Check for compatible version with Jersey/HK2 -->
     </dependency>
 
-    <!-- Jersey JAX-RS Client (If needed by any component like AuthResource) -->
-    <dependency>
+    <!-- Jersey JAX-RS Client (Needed by GitHubAuthResource for Java 11+ HttpClient) -->
+    <!-- Not strictly required if only using java.net.http.HttpClient -->
+    <!-- <dependency>
       <groupId>org.glassfish.jersey.core</groupId>
       <artifactId>jersey-client</artifactId>
       <version>${jersey.version}</version>
-    </dependency>
+    </dependency> -->
 
-    <!-- Jersey Multipart Support (For @FormDataParam, file uploads) -->
+    <!-- Jersey Multipart Support (Needed by RequestHandler originally) -->
     <dependency>
       <groupId>org.glassfish.jersey.media</groupId>
       <artifactId>jersey-media-multipart</artifactId>
       <version>${jersey.version}</version>
     </dependency>
 
-    <!-- Jersey Jackson JSON Support (For automatic JSON conversion) -->
+    <!-- Jersey Jackson JSON Support (Crucial for automatic JSON conversion) -->
     <dependency>
       <groupId>org.glassfish.jersey.media</groupId>
       <artifactId>jersey-media-json-jackson</artifactId>
       <version>${jersey.version}</version>
+    </dependency>
+
+    <!-- Jackson Databind (Core Jackson library - pulled in by jersey-media-json-jackson usually, but explicit is fine) -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+    <!-- Jackson Java Time Support (For handling Java 8+ Time types like Duration) -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.datatype</groupId>
+      <artifactId>jackson-datatype-jsr310</artifactId>
+      <version>${jackson.version}</version>
     </dependency>
 
     <!-- JAXB API and Runtime (Often required by Jersey/Jackson, especially on JDK 9+) -->
@@ -153,11 +171,18 @@
       <scope>runtime</scope> <!-- Only needed at runtime -->
     </dependency>
 
-    <!-- JGit -->
+    <!-- JGit (Keep if your LSK logic actually uses it) -->
     <dependency>
       <groupId>org.eclipse.jgit</groupId>
       <artifactId>org.eclipse.jgit</artifactId>
       <version>${jgit.version}</version>
+    </dependency>
+
+    <!-- jBCrypt (Needed for AuthResource originally, keep if sign-out logic remains or is adapted) -->
+    <dependency>
+      <groupId>org.mindrot</groupId>
+      <artifactId>jbcrypt</artifactId>
+      <version>${bcrypt.version}</version>
     </dependency>
 
     <!-- JUnit 5 Testing Dependencies -->
@@ -174,13 +199,7 @@
       <scope>test</scope>
     </dependency>
 
-
-    <dependency>
-      <groupId>org.mindrot</groupId>
-      <artifactId>jbcrypt</artifactId>
-      <version>0.4</version> <!-- Or a more recent compatible version -->
-    </dependency>
-  </dependencies>
+  </dependencies> <!-- <<<<<<<<< END OF MAIN DEPENDENCIES BLOCK >>>>>>>>> -->
 
   <!-- Build Configuration -->
   <build>
@@ -204,18 +223,6 @@
         <!-- Configuration for web.xml handled by failOnMissingWebXml property -->
       </plugin>
 
-      <!-- Optional: Tomcat Plugin for easy local testing -->
-      <!--
-      <plugin>
-          <groupId>org.apache.tomcat.maven</groupId>
-          <artifactId>tomcat7-maven-plugin</artifactId>
-          <version>${tomcat7-maven-plugin.version}</version>
-          <configuration>
-              <path>/${project.build.finalName}</path> // Context path
-              <port>8080</port>
-          </configuration>
-      </plugin>
-      -->
     </plugins>
   </build>
 

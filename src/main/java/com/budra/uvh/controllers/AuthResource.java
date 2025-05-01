@@ -1,128 +1,108 @@
 package com.budra.uvh.controllers;
 
-import com.budra.uvh.dto.AuthResponse;
-import com.budra.uvh.dto.Credentials;
+// Import only necessary DTOs
 import com.budra.uvh.dto.MessageResponse;
 
+// JAX-RS imports
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
-import org.mindrot.jbcrypt.BCrypt;
-
+// Logging imports
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+// Concurrency import
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-@Path("/auth")
+/**
+ * Manages backend sessions and sign-out functionality.
+ * Authentication (sign-in) is now handled by GitHubAuthResource.
+ */
+@Path("/auth") // Base path for authentication-related actions
 @Produces(MediaType.APPLICATION_JSON)
 public class AuthResource {
 
     private static final Logger log = LoggerFactory.getLogger(AuthResource.class);
 
-    // Stores email -> BCrypt hashed password
-    private static final Map<String, String> userCredentials = new ConcurrentHashMap<>();
-    // Stores active session token -> email
-    private static  Map<String, String> activeSessions;
+    // --- Session Management ---
+    // This map stores the active backend sessions.
+    // Key: Backend-generated session token (e.g., UUID)
+    // Value: User identifier obtained from GitHub (e.g., email or "github_id:12345")
+    // NOTE: Static map is simple but not persistent. Consider a proper session store (DB, Redis) for production.
+    private static final Map<String, String> activeSessions = new ConcurrentHashMap<>();
 
+    /**
+     * Provides access to the active session map (used by GitHubAuthResource and validation).
+     * @return The map of active backend tokens to user identifiers.
+     */
     public static Map<String, String> getActiveSessions() {
         return activeSessions;
     }
 
-    static {
-        log.info("Initializing dummy user credentials (Hashing Passwords)...");
-
-        userCredentials.put("hari@zoho.com", BCrypt.hashpw("hari", BCrypt.gensalt()));
-        userCredentials.put("budra@zoho.com", BCrypt.hashpw("hari", BCrypt.gensalt()));
-        log.info("Dummy credentials initialized.");
-        activeSessions = new ConcurrentHashMap<>();
-    }
-
-    @POST
-    @Path("/signin")
-    @Consumes(MediaType.APPLICATION_JSON)
-    public Response signIn(Credentials credentials) {
-        log.info("Received sign-in request for email: {}", credentials != null ? credentials.email : "null");
-
-        if (credentials == null || credentials.email == null || credentials.email.trim().isEmpty()
-                || credentials.password == null || credentials.password.isEmpty()) {
-            log.warn("Sign-in attempt with missing email or password.");
-            return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(new MessageResponse("Email and password are required."))
-                    .build();
-        }
-
-        String email = credentials.email.trim().toLowerCase();
-        String providedPassword = credentials.password;
-
-        String storedHash = userCredentials.get(email);
-        if (storedHash == null) {
-            log.warn("Sign-in attempt failed: User not found for email {}", email);
-            return Response.status(Response.Status.UNAUTHORIZED)
-                    .entity(new MessageResponse("Invalid email or password."))
-                    .build();
-        }
-
-        if (BCrypt.checkpw(providedPassword, storedHash)) {
-
-            log.info("Password verified for user {}", email);
-
-            String token = UUID.randomUUID().toString();
-
-            activeSessions.put(token, email);
-            log.info("Generated session token {} for user {}", token, email);
-            log.info("");
-            log.info("Active sessions map : " +  getActiveSessions());
-            log.info("");
-
-            return Response.status(Response.Status.OK)
-                    .entity(new AuthResponse("Sign-in successful.", token))
-                    .build();
-        } else {
-
-            log.warn("Sign-in attempt failed: Invalid password for email {}", email);
-
-            return Response.status(Response.Status.UNAUTHORIZED)
-                    .entity(new MessageResponse("Invalid email or password."))
-                    .build();
-        }
-    }
-
-    @POST
-    @Path("/signout")
-    public Response signOut(@HeaderParam("Authorization") String token) {
-        log.info("Received sign-out request for token: {}", token != null ? token.substring(0, Math.min(8, token.length()))+"..." : "null"); // Log partial token
-
+    /**
+     * Validates a backend session token provided by the plugin.
+     * @param token The backend token (without "Bearer ").
+     * @return The user identifier (e.g., email, github_id:...) associated with the token, or null if invalid/expired.
+     */
+    public static String validateToken(String token) {
         if (token == null || token.trim().isEmpty()) {
-            log.warn("Sign-out attempt with missing token.");
-            // Return 400 Bad Request as the required header is missing
+            return null; // No token provided
+        }
+        // Lookup the token in the active sessions map
+        String userIdentifier = activeSessions.get(token.trim());
+        if (userIdentifier != null) {
+            log.trace("Token validation successful for token prefix: {}", token.substring(0, Math.min(8, token.length())));
+        } else {
+            log.trace("Token validation failed for token prefix: {}", token.substring(0, Math.min(8, token.length())));
+        }
+        return userIdentifier; // Returns the identifier or null
+    }
+
+
+    // --- Sign-Out Endpoint ---
+    @POST // Handles POST requests for sign-out
+    @Path("/signout")
+    public Response signOut(@HeaderParam("Authorization") String authorizationHeader) {
+        log.info("Received sign-out request.");
+
+        String token = null;
+        final String bearerPrefix = "Bearer "; // Define prefix locally
+
+        // Extract token from "Bearer <token>" header
+        if (authorizationHeader != null && authorizationHeader.startsWith(bearerPrefix)) {
+            token = authorizationHeader.substring(bearerPrefix.length()).trim();
+        }
+
+        // Check if token was extracted
+        if (token == null || token.isEmpty()) {
+            log.warn("Sign-out attempt with missing or invalid Bearer token in Authorization header.");
+            // Return 400 Bad Request as the required header is missing or malformed
             return Response.status(Response.Status.BAD_REQUEST)
-                    .entity(new MessageResponse("Authentication token is required."))
+                    .entity(new MessageResponse("Authorization header with Bearer token is required."))
                     .build();
         }
 
+        // Attempt to remove the session associated with the token
+        String removedIdentifier = activeSessions.remove(token);
 
-        String removedEmail = activeSessions.remove(token.trim());
-
-        if (removedEmail != null) {
-            log.info("Successfully signed out user {} associated with token.", removedEmail);
+        if (removedIdentifier != null) {
+            // Successfully removed the session
+            log.info("Successfully signed out session for user identifier '{}' associated with token prefix '{}...'", removedIdentifier, token.substring(0, Math.min(8, token.length())));
+            log.debug("Active sessions map size after removal: {}", activeSessions.size());
         } else {
-            log.warn("Sign-out request received for an invalid or expired token.");
-
+            // Token was not found in the active sessions map (already signed out, invalid, or expired)
+            log.warn("Sign-out request received for an invalid or already expired token prefix: '{}...'", token.substring(0, Math.min(8, token.length())));
         }
 
+        // Always return a success response for sign-out attempts, regardless of whether
+        // the token was valid or not. This prevents leaking information about session validity.
         return Response.ok()
-                .entity(new MessageResponse("Sign-out successful."))
+                .entity(new MessageResponse("Sign-out processed."))
                 .build();
     }
 
-    public static String validateToken(String token) {
-        if (token == null || token.trim().isEmpty()) {
-            return null;
-        }
-        return activeSessions.get(token.trim());
-    }
+    // No signIn method needed here anymore.
+    // No credential storage needed here anymore.
 }

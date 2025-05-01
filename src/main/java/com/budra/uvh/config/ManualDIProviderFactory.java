@@ -3,7 +3,7 @@ package com.budra.uvh.config;
 // ... other imports ...
 import java.util.function.Supplier; // <<< CHANGE IMPORT
 
-import com.budra.uvh.controllers.RequestHandler;
+import com.budra.uvh.controllers.LskResource;
 import com.budra.uvh.model.LskRepository;
 import com.budra.uvh.service.LskResolution;
 import org.slf4j.Logger;
@@ -29,12 +29,12 @@ public class ManualDIProviderFactory {
     }
 
     // --- Factory for RequestHandler (implements Supplier) ---
-    public static class RequestHandlerProvider implements Supplier<RequestHandler> { // <<< CHANGE HERE
+    public static class LskResourceProvider implements Supplier<LskResource> { // <<< CHANGE HERE
         @Override
-        public RequestHandler get() {
+        public LskResource get() {
             log.debug("ManualDIProviderFactory: Providing new RequestHandler instance.");
             LskResolution resolutionService = new LskResolutionProvider().get();
-            return new RequestHandler(resolutionService);
+            return new LskResource(resolutionService);
         }
     }
 

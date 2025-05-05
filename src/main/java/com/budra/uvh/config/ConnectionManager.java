@@ -13,15 +13,13 @@ import java.util.Properties;
 
 public class ConnectionManager {
     private static final Logger log = LoggerFactory.getLogger(ConnectionManager.class);
-    private static final String CONFIG_FILE = "/uvh_config.properties"; // Ensure this is in src/main/resources
+    private static final String CONFIG_FILE = "/uvh_config.properties";
+    private static HikariDataSource dataSource;
 
-    private static HikariDataSource dataSource; // Keep this static
-
-    // Static initializer block: runs once when the class is loaded
     static {
         log.info("Initializing HikariCP connection pool...");
-        Properties props = null; // Initialize to null
-        HikariConfig config = null; // Initialize to null
+        Properties props = null;
+        HikariConfig config = null;
         try {
             props = loadProperties();
             config = new HikariConfig();
@@ -29,16 +27,14 @@ public class ConnectionManager {
             // --- Log the exact values being used ---
             String dbUrl = props.getProperty("db.url", "jdbc:postgresql://localhost:5432/postgres");
             String dbUser = props.getProperty("db.user", "postgres");
-            // Avoid logging password in production logs if possible, but useful for debugging:
+
             String dbPassword = props.getProperty("db.password", "1234");
             String dbDriver = props.getProperty("db.driver", "org.postgresql.Driver");
             log.info("Attempting to configure HikariCP with:");
             log.info("  db.url = {}", dbUrl);
             log.info("  db.user = {}", dbUser);
-            // log.info("  db.password = <HIDDEN>"); // Better for production
-            log.info("  db.password = {}", dbPassword); // Use for local debugging only
+//            log.info("  db.password = {}", dbPassword);
             log.info("  db.driver = {}", dbDriver);
-            // --- End logging ---
 
             // Configure HikariCP from properties
             config.setJdbcUrl(dbUrl);
@@ -59,9 +55,7 @@ public class ConnectionManager {
             log.info("HikariCP DataSource initialized successfully for JDBC URL: {}", config.getJdbcUrl());
 
         } catch (Exception e) {
-            // Log the full stack trace of the exception 'e'
             log.error("!!! CRITICAL: Failed to initialize HikariCP DataSource !!!", e);
-            // Optionally log config again if helpful
             if (config != null) {
                 log.error("Failed configuration details: URL={}, User={}, Driver={}", config.getJdbcUrl(), config.getUsername(), config.getDriverClassName());
             } else if (props != null) {
@@ -72,16 +66,15 @@ public class ConnectionManager {
         }
     }
 
-    // loadProperties method remains the same as you provided
     private static Properties loadProperties() {
         Properties props = new Properties();
         try (InputStream input = ConnectionManager.class.getResourceAsStream(CONFIG_FILE)) {
             if (input == null) {
                 log.warn("!!! {} not found on classpath. Using hardcoded defaults (NOT recommended for production).", CONFIG_FILE);
                 // Set some basic defaults if file not found
-                props.setProperty("db.url", "jdbc:postgresql://localhost:5432/postgres"); // Example DB name
-                props.setProperty("db.user", "postgres"); // Corrected property name
-                props.setProperty("db.password", "1234"); // Corrected property name
+                props.setProperty("db.url", "jdbc:postgresql://localhost:5432/postgres");
+                props.setProperty("db.user", "postgres");
+                props.setProperty("db.password", "1234");
                 props.setProperty("db.driver", "org.postgresql.Driver");
                 props.setProperty("db.pool.maxSize", "5");
                 return props;
@@ -90,10 +83,9 @@ public class ConnectionManager {
             log.info("Loaded database configuration from {}", CONFIG_FILE);
         } catch (IOException e) {
             log.error("!!! Error loading database configuration file: {}. Using defaults.", CONFIG_FILE, e);
-            // Set defaults on error too
             props.setProperty("db.url", "jdbc:postgresql://localhost:5432/postgres");
-            props.setProperty("db.user", "postgres"); // Corrected property name
-            props.setProperty("db.password", "1234"); // Corrected property name
+            props.setProperty("db.user", "postgres");
+            props.setProperty("db.password", "1234");
             props.setProperty("db.driver", "org.postgresql.Driver");
             props.setProperty("db.pool.maxSize", "5");
         }
@@ -120,9 +112,7 @@ public class ConnectionManager {
     /**
      * Private constructor to prevent instantiation of this utility class.
      */
-    private ConnectionManager() {
-        // Utility class should not be instantiated
-    }
+    private ConnectionManager() { }
 
     /**
      * Optional: Add a shutdown hook or a manual method to close the DataSource

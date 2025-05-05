@@ -5,12 +5,10 @@ package com.budra.uvh.dto;
  * during the GitHub OAuth code exchange.
  */
 public class GitHubCodeRequest {
-    public String code; // Field name must match the JSON key expected from the plugin
+    public String code;
 
-    // Default constructor needed for JSON deserialization libraries like Jackson/Gson
     public GitHubCodeRequest() {}
 
-    // Getters and Setters (Optional, depending on library usage, but good practice)
     public String getCode() {
         return code;
     }

@@ -1,18 +1,14 @@
 package com.budra.uvh.controllers;
 
-// Import only necessary DTOs
 import com.budra.uvh.dto.MessageResponse;
 
-// JAX-RS imports
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
-// Logging imports
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-// Concurrency import
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Manages backend sessions and sign-out functionality.
  * Authentication (sign-in) is now handled by GitHubAuthResource.
  */
-@Path("/auth") // Base path for authentication-related actions
+@Path("/auth")
 @Produces(MediaType.APPLICATION_JSON)
 public class AuthResource {
 
@@ -62,13 +58,13 @@ public class AuthResource {
 
 
     // --- Sign-Out Endpoint ---
-    @POST // Handles POST requests for sign-out
+    @POST
     @Path("/signout")
     public Response signOut(@HeaderParam("Authorization") String authorizationHeader) {
         log.info("Received sign-out request.");
 
         String token = null;
-        final String bearerPrefix = "Bearer "; // Define prefix locally
+        final String bearerPrefix = "Bearer ";
 
         // Extract token from "Bearer <token>" header
         if (authorizationHeader != null && authorizationHeader.startsWith(bearerPrefix)) {
@@ -95,14 +91,8 @@ public class AuthResource {
             // Token was not found in the active sessions map (already signed out, invalid, or expired)
             log.warn("Sign-out request received for an invalid or already expired token prefix: '{}...'", token.substring(0, Math.min(8, token.length())));
         }
-
-        // Always return a success response for sign-out attempts, regardless of whether
-        // the token was valid or not. This prevents leaking information about session validity.
         return Response.ok()
                 .entity(new MessageResponse("Sign-out processed."))
                 .build();
     }
-
-    // No signIn method needed here anymore.
-    // No credential storage needed here anymore.
 }

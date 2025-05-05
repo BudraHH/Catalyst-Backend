@@ -5,7 +5,11 @@ import com.budra.uvh.model.LskRepository;
 import com.budra.uvh.exception.PlaceholderFormatException;
 import com.budra.uvh.exception.LskGenerationException;
 import com.budra.uvh.exception.ReferenceResolutionException;
-import com.budra.uvh.utils.XmlUtils; // Needs the modified version
+import com.budra.uvh.utils.XmlUtils; // Needs the modified version finding elements
+
+// Import Jackson for JSON conversion
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,21 +23,24 @@ import java.util.stream.Collectors;
 public class LskResolution {
     private static final Logger log = LoggerFactory.getLogger(LskResolution.class);
     private final LskRepository lskRepository;
+    private final ObjectMapper objectMapper; // For JSON conversion
 
+    // SQL statement remains the same
     private static final String INSERT_LOG_SQL =
-            "INSERT INTO LskResolutionLog (dev_email, table_name, column_name, module_name, start_value, end_value, source_xml_elements) VALUES (?, ?, ?, ?, ?, ?, ?)";
+            "INSERT INTO LskResolutionLog (" +
+                    "  dev_email, table_name, column_name, module_name, start_value, end_value, " +
+                    "  placeholder_mapping, source_xml_elements, resolved_xml_elements" +
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)";
 
     public LskResolution(LskRepository lskRepository) {
         log.debug("LskResolution instance created with LskRepository.");
-        if (lskRepository == null) {
-            throw new IllegalArgumentException("LskRepository cannot be null");
-        }
+        if (lskRepository == null) { throw new IllegalArgumentException("LskRepository cannot be null"); }
         this.lskRepository = lskRepository;
+        this.objectMapper = new ObjectMapper();
     }
 
     // --- Inner class RangeKey remains the same ---
-    private static final class RangeKey {
-        // ... (same as before) ...
+    private static final class RangeKey { /* ... */
         private final String tableName; private final String columnName; private final String moduleName;
         public RangeKey(String t, String c, String m) { this.tableName=t; this.columnName=c; this.moduleName=m; }
         @Override public boolean equals(Object o) { if (this==o) return true; if (o==null||getClass()!=o.getClass()) return false; RangeKey rk=(RangeKey)o; return Objects.equals(tableName, rk.tableName) && Objects.equals(columnName, rk.columnName) && Objects.equals(moduleName, rk.moduleName); }
@@ -41,209 +48,222 @@ public class LskResolution {
         @Override public String toString() { return "RangeKey{"+tableName+":"+columnName+":"+moduleName+"}";}
     }
 
-    // --- Inner class RangeInfo: No longer needs to store sourceElements directly ---
-    // It only tracks the range itself for the log entry.
-    private static class RangeInfo {
-        long firstValue;
-        long lastValue;
-        String tableName;
-        String columnName;
-        String moduleName;
-        // <<< REMOVED sourceElements List >>>
-
-        RangeInfo(long initialValue, String table, String column, String module) {
-            this.firstValue = initialValue; this.lastValue = initialValue; this.tableName = table; this.columnName = column; this.moduleName = module;
-        }
+    // --- Inner class RangeInfo remains the same ---
+    private static class RangeInfo { /* ... */
+        long firstValue; long lastValue; String tableName; String columnName; String moduleName;
+        RangeInfo(long initialValue, String table, String column, String module) { this.firstValue = initialValue; this.lastValue = initialValue; this.tableName = table; this.columnName = column; this.moduleName = module; }
         public void setLastValue(long lastValue) { this.lastValue = lastValue; }
-        // <<< REMOVED addSourceElement Method >>>
-        // Getters
         public long getFirstValue() { return firstValue; } public long getLastValue() { return lastValue; } public String getTableName() { return tableName; } public String getColumnName() { return columnName; } public String getModuleName() { return moduleName; }
-        // <<< REMOVED getSourceElements Getter >>>
     }
 
 
-    public String processAndResolveXml(String inputXml, String devEmail)
+    public String processAndResolveXml(String moduleName, String inputXml, String devEmail)
             throws PlaceholderFormatException, LskGenerationException, ReferenceResolutionException, SQLException {
 
         log.info("Starting LSK/Reference resolution process for user: {}", devEmail);
-        if (this.lskRepository == null || devEmail == null || devEmail.isEmpty() || inputXml == null || inputXml.isEmpty()) {
-            throw new IllegalArgumentException("Repository, DevEmail, and InputXML must not be null or empty.");
-        }
+        if (this.lskRepository == null || devEmail == null || devEmail.isEmpty() || inputXml == null || inputXml.isEmpty()) { throw new IllegalArgumentException("Repository, DevEmail, and InputXML must not be null or empty."); }
 
-        // --- Find Placeholders AND Source Elements ---
+        // --- Step 1: Find Placeholders and Source Elements ---
         Map<String, List<String>> pkPlaceholdersWithElements = XmlUtils.findPkPlaceholdersWithElements(inputXml);
         Map<String, String> fkReferences = XmlUtils.findFkReferences(inputXml);
         Set<String> uniquePkPlaceholders = pkPlaceholdersWithElements.keySet();
 
-        if (uniquePkPlaceholders.isEmpty() && fkReferences.isEmpty()) {
-            log.info("No LSK placeholders or FK references found for user {}. Returning original XML.", devEmail);
-            return inputXml;
-        }
-        log.info("Found {} unique PK placeholders and {} unique FK references for user {}",
-                uniquePkPlaceholders.size(), fkReferences.size(), devEmail);
+        if (uniquePkPlaceholders.isEmpty() && fkReferences.isEmpty()) { log.info("No LSK placeholders or FK references found. Returning original XML."); return inputXml; }
+        log.info("Found {} unique PK placeholders and {} unique FK references.", uniquePkPlaceholders.size(), fkReferences.size());
 
-        // --- Resolve Primary Keys ---
+        // --- Step 2: Resolve Primary Keys and Aggregate Data ---
         Map<String, String> pkResolutionMap = new HashMap<>(); // PK Placeholder -> Resolved LSK String
-        Map<RangeKey, RangeInfo> rangesProcessed = new HashMap<>(); // Tracks first/last value per RangeKey
-        // <<< NEW MAP: Aggregate source elements per RangeKey >>>
-        Map<RangeKey, List<String>> elementsPerRangeKey = new HashMap<>(); // RangeKey -> List of <Element...> strings
+        Map<RangeKey, RangeInfo> rangesProcessed = new HashMap<>();
+        Map<RangeKey, List<String>> elementsPerRangeKey = new HashMap<>();
+        Map<RangeKey, Map<String, String>> mappingsPerRangeKey = new HashMap<>(); // Specific mappings per key
 
-        Connection connection = null;
-        boolean transactionSuccess = false;
+        Connection generationConn = null;
+        boolean generationSuccess = false;
 
         if (!uniquePkPlaceholders.isEmpty()) {
-            try {
-                connection = ConnectionManager.getConnection();
-                connection.setAutoCommit(false);
-                log.debug("DB transaction started for LSK generation.");
+            try { // Transaction for value generation
+                generationConn = ConnectionManager.getConnection();
+                generationConn.setAutoCommit(false);
+                log.debug("DB transaction started for LSK value generation.");
                 Map<RangeKey, Long> nextValueTracker = new HashMap<>();
 
-                // --- Loop 1: Resolve LSKs and Aggregate Source Elements ---
-                log.debug("--- Starting LSK Resolution and Element Aggregation Phase ---");
-                for (Map.Entry<String, List<String>> entry : pkPlaceholdersWithElements.entrySet()) {
-                    String pkPlaceholder = entry.getKey();
-                    List<String> sourceElementsForThisPlaceholder = entry.getValue();
-
-                    String tableName, columnName, moduleName;
-                    try {
-                        String[] parts = pkPlaceholder.split(":", 4);
-                        if (parts.length < 4 || parts[0].isEmpty() || parts[1].isEmpty() || parts[2].isEmpty()) {
-                            throw new PlaceholderFormatException("Invalid PK format parsed: " + pkPlaceholder);
+                for (Map.Entry<String, List<String>> entry : pkPlaceholdersWithElements.entrySet()) { // Loop 1
+                    String originalPkPlaceholder = entry.getKey();
+                    List<String> sourceElements = entry.getValue();
+                    String tableName, columnName;
+                    try { String[] parts = originalPkPlaceholder.split(":", 3);
+                        if (parts.length < 3 || parts[0].isEmpty()||parts[1].isEmpty()||parts[2].isEmpty()){
+                            throw new PlaceholderFormatException(originalPkPlaceholder);
                         }
-                        tableName = parts[0]; columnName = parts[1]; moduleName = parts[2];
-                    } catch (Exception e) { throw new PlaceholderFormatException("Error parsing PK placeholder: " + pkPlaceholder, e); }
-
+                        tableName=parts[0];
+                        columnName=parts[1];
+                    } catch (Exception e){
+                        throw new PlaceholderFormatException(originalPkPlaceholder, e);
+                    }
                     RangeKey currentKey = new RangeKey(tableName, columnName, moduleName);
                     long valueToAssign;
-
-                    // Determine next value
-                    if (nextValueTracker.containsKey(currentKey)) {
-                        valueToAssign = nextValueTracker.get(currentKey);
-                    } else {
-                        valueToAssign = this.lskRepository.getNextStartingValue(connection, tableName, columnName, moduleName);
-                    }
-                    nextValueTracker.put(currentKey, valueToAssign + 1); // Update tracker for next iteration
-
-                    // Track the MIN/MAX values for the range log
-                    RangeInfo rangeInfo = rangesProcessed.computeIfAbsent(currentKey,
-                            k -> new RangeInfo(valueToAssign, tableName, columnName, moduleName));
-                    rangeInfo.setLastValue(valueToAssign); // Keep updating last value
-
-                    // <<< AGGREGATE source elements for this RangeKey >>>
-                    if (sourceElementsForThisPlaceholder != null && !sourceElementsForThisPlaceholder.isEmpty()) {
-                        elementsPerRangeKey.computeIfAbsent(currentKey, k -> new ArrayList<>())
-                                .addAll(sourceElementsForThisPlaceholder); // Add all elements found for this placeholder
-                    }
-
-                    // Store the resolution for XML replacement
-                    String resolvedLsk = tableName + ":" + columnName + ":" + valueToAssign;
-                    pkResolutionMap.put(pkPlaceholder, resolvedLsk);
-                    log.debug("Resolved PK '{}' -> LSK '{}' (Value: {}). Associated elements gathered for key {}.",
-                            pkPlaceholder, resolvedLsk, valueToAssign, currentKey);
-
-                } // End loop through unique PK placeholders
-                log.debug("--- Finished LSK Resolution and Element Aggregation Phase ---");
-
-
-                // --- Loop 2: Log Consolidated Ranges using aggregated elements ---
-                log.info("Logging consolidated ranges and aggregated source elements to LskResolutionLog for user {}...", devEmail);
-                for (Map.Entry<RangeKey, RangeInfo> rangeEntry : rangesProcessed.entrySet()) {
-                    RangeKey key = rangeEntry.getKey();
-                    RangeInfo range = rangeEntry.getValue();
-                    // Get the complete list of aggregated elements for this key
-                    List<String> aggregatedElements = elementsPerRangeKey.getOrDefault(key, Collections.emptyList());
-
-                    logConsolidatedResolution(connection, devEmail,
-                            range.getTableName(), range.getColumnName(), range.getModuleName(),
-                            range.getFirstValue(), range.getLastValue(),
-                            aggregatedElements); // Pass the fully aggregated list
+                    if (nextValueTracker.containsKey(currentKey)) { valueToAssign = nextValueTracker.get(currentKey); } else { valueToAssign = this.lskRepository.getNextStartingValue(generationConn, tableName, columnName, moduleName); }
+                    nextValueTracker.put(currentKey, valueToAssign + 1);
+                    RangeInfo rangeInfo = rangesProcessed.computeIfAbsent(currentKey, k -> new RangeInfo(valueToAssign, tableName, columnName, moduleName));
+                    rangeInfo.setLastValue(valueToAssign);
+                    if (sourceElements != null && !sourceElements.isEmpty()) { elementsPerRangeKey.computeIfAbsent(currentKey, k -> new ArrayList<>()).addAll(sourceElements); }
+                    String resolvedLskString = tableName + ":" + columnName + ":" + moduleName + ":" + valueToAssign;
+                    pkResolutionMap.put(originalPkPlaceholder, resolvedLskString);
+                    mappingsPerRangeKey.computeIfAbsent(currentKey, k -> new HashMap<>()).put(originalPkPlaceholder, resolvedLskString);
                 }
-                log.info("Finished logging consolidated ranges.");
-
-                // --- Commit Transaction ---
-                connection.commit();
-                transactionSuccess = true;
-                log.debug("DB transaction committed successfully (incl. consolidated logs).");
-
-            } catch (SQLException | LskGenerationException | PlaceholderFormatException | IllegalArgumentException e) {
-                log.error("Error during LSK resolution transaction for user {}: {}", devEmail, e.getMessage(), e);
-                if (e instanceof SQLException || e instanceof IllegalArgumentException) { throw new LskGenerationException("Error during LSK processing: "+e.getMessage(),e); }
-                else { throw e; }
+                generationConn.commit();
+                generationSuccess = true;
+                log.debug("DB transaction for LSK value generation committed.");
+            } catch (Exception e) { // Catch all exceptions during generation
+                log.error("Error during LSK value generation transaction for user {}: {}", devEmail, e.getMessage(), e);
+                // Rethrow appropriate exception
+                if (e instanceof SQLException || e instanceof IllegalArgumentException) { throw new LskGenerationException("DB/Config error during LSK value generation: "+e.getMessage(),e); }
+                else if (e instanceof PlaceholderFormatException) { throw (PlaceholderFormatException) e;}
+                else { throw new LskGenerationException("Unexpected error during LSK generation: "+e.getMessage(), e); }
             } finally {
-                if (connection != null) { try { if (!transactionSuccess) { log.warn("Rolling back DB transaction."); connection.rollback();} } catch (SQLException ex){log.error("Rollback failed",ex);}finally{ try { connection.setAutoCommit(true); connection.close();log.debug("DB conn closed."); } catch (SQLException e) {log.error("Conn close failed",e);} } }
+                if (generationConn != null) { try { if (!generationSuccess) { generationConn.rollback();} } catch (SQLException ex){log.error("Generation Rollback failed",ex);}finally{ try { generationConn.setAutoCommit(true); generationConn.close();} catch (SQLException e) {log.error("Generation Conn close failed",e);} } }
             }
         } else {
             log.info("No PK placeholders found to resolve for user {}.", devEmail);
         }
 
-        // --- Resolve Foreign Keys (remains the same) ---
+        // --- Step 3: Resolve Foreign Keys (Build the final replacement map) ---
+        // Start with PK resolutions
         Map<String, String> finalReplacements = new HashMap<>(pkResolutionMap);
         if (!fkReferences.isEmpty()) {
-            log.debug("Resolving {} FK references for user {}...", fkReferences.size(), devEmail);
+            log.debug("Resolving {} FK references...", fkReferences.size());
             for (Map.Entry<String, String> fkEntry : fkReferences.entrySet()) {
-                String fullRefString = fkEntry.getKey(); String targetPkPlaceholder = fkEntry.getValue();
-                String resolvedTargetLsk = pkResolutionMap.get(targetPkPlaceholder);
-                if (resolvedTargetLsk == null) { throw new ReferenceResolutionException("Cannot resolve reference '" + fullRefString + "'. Target placeholder '" + targetPkPlaceholder + "' was not found/resolved."); }
-                finalReplacements.put(fullRefString, resolvedTargetLsk);
-                log.trace("Mapped FK '{}' -> LSK '{}'", fullRefString, resolvedTargetLsk);
+                String fullRefString = fkEntry.getKey(); // REF:{T:C:Lid}
+                String targetPkPlaceholder = fkEntry.getValue(); // T:C:Lid
+                String resolvedTargetLsk = pkResolutionMap.get(targetPkPlaceholder); // Look up T:C:Value
+                if (resolvedTargetLsk == null) { throw new ReferenceResolutionException("Cannot resolve FK '" + fullRefString + "'. Target PK '" + targetPkPlaceholder + "' not resolved."); }
+                finalReplacements.put(fullRefString, resolvedTargetLsk); // Add REF:{...} -> T:C:M:Value
             }
-        } else { log.debug("No FK references found for user {}.", devEmail); }
+        }
 
+        // --- Step 4: Perform Final XML Replacements (for the string returned to plugin) ---
+        log.info("Performing final XML replacements for response...");
+        String resolvedXmlOutput = XmlUtils.replaceAllPlaceholders(inputXml, finalReplacements); // Use the map with FKs resolved
 
-        // --- Perform XML Replacements (remains the same) ---
-        log.info("Performing final XML replacements in attribute values for user {}...", devEmail);
-        String resolvedXml = XmlUtils.replaceAllPlaceholders(inputXml, finalReplacements);
+        // --- Step 5: Log to Database (using the final replacement map for elements) ---
+        if (!rangesProcessed.isEmpty()) {
+            Connection loggingConn = null;
+            boolean loggingSuccess = false;
+            try {
+                loggingConn = ConnectionManager.getConnection();
+                loggingConn.setAutoCommit(false);
+                log.debug("DB transaction started for *logging* resolved LSKs.");
 
-        log.info("LSK/Reference resolution service finished successfully for user: {}", devEmail);
-        return resolvedXml;
+                for (Map.Entry<RangeKey, RangeInfo> rangeEntry : rangesProcessed.entrySet()) {
+                    RangeKey key = rangeEntry.getKey();
+                    RangeInfo range = rangeEntry.getValue();
+                    Map<String, String> specificPkMapping = mappingsPerRangeKey.getOrDefault(key, Collections.emptyMap()); // PK map for JSON column
+                    List<String> aggregatedSourceElements = elementsPerRangeKey.getOrDefault(key, Collections.emptyList()); // Original elements
+
+                    // <<< Pass the FINAL replacement map to the logging method >>>
+                    logResolutionEvent(loggingConn, devEmail,
+                            range.getTableName(), range.getColumnName(), range.getModuleName(),
+                            range.getFirstValue(), range.getLastValue(),
+                            specificPkMapping, // Map with only PKs resolved (for placeholder_mapping column)
+                            aggregatedSourceElements, // Original elements (for source_xml_elements column)
+                            finalReplacements // <<< Map with PKs AND FKs resolved (for generating resolved_xml_elements column)
+                    );
+                }
+
+                loggingConn.commit();
+                loggingSuccess = true;
+                log.info("Consolidated LSK resolution logs committed successfully.");
+
+            } catch (SQLException | JsonProcessingException e) {
+                log.error("Error during LSK logging transaction for user {}: {}", devEmail, e.getMessage(), e);
+            } finally {
+                if (loggingConn != null) { try { if (!loggingSuccess) { loggingConn.rollback();} } catch (SQLException ex){log.error("Logging Rollback failed",ex);}finally{ try { loggingConn.setAutoCommit(true); loggingConn.close();} catch (SQLException e) {log.error("Logging Conn close failed",e);} } }
+            }
+        }
+
+        // --- Step 6: Return Final Result ---
+        log.info("LSK/Reference resolution service finished successfully.");
+        return resolvedXmlOutput;
     }
 
 
     /**
-     * Inserts a CONSOLIDATED log record for a processed range, including concatenated source XML elements.
-     * (Method implementation remains the same as previous correct version)
+     * <<< MODIFIED SIGNATURE & LOGIC >>>
+     * Inserts a log record.
+     * - placeholderMapping (Map<OriginalPK, ResolvedLSK>) is serialized to JSON for the 'placeholder_mapping' column.
+     * - sourceElements (List<OriginalElement>) are concatenated for the 'source_xml_elements' column.
+     * - replacementsForElements (Map<OriginalPlaceholderOrRef, ResolvedLSK>) is used to generate the 'resolved_xml_elements' column.
      */
-    private void logConsolidatedResolution(Connection conn, String email, String table, String column, String module,
-                                           long startVal, long endVal, List<String> sourceElements)
-            throws SQLException {
+    private void logResolutionEvent(Connection conn, String email, String table, String column, String module,
+                                    long startVal, long endVal,
+                                    Map<String, String> placeholderMapping, // Specific PK map for JSON column
+                                    List<String> sourceElements,           // Original elements
+                                    Map<String, String> replacementsForElements) // FULL map (PKs+FKs) for resolving elements
+            throws SQLException, JsonProcessingException {
 
-        String concatenatedElements = "";
+        // 1. Serialize the specific PK placeholder map to JSON
+        String mappingJsonString = "{}";
+        if (placeholderMapping != null && !placeholderMapping.isEmpty()) {
+            mappingJsonString = objectMapper.writeValueAsString(placeholderMapping);
+        }
+
+        // 2. Concatenate original source elements
+        String concatenatedSourceElements = "";
         if (sourceElements != null && !sourceElements.isEmpty()) {
-            concatenatedElements = sourceElements.stream()
+            concatenatedSourceElements = sourceElements.stream()
                     .filter(Objects::nonNull)
                     .collect(Collectors.joining("\n"));
         }
 
-        int maxLogLength = 4000;
-        String loggedElements = concatenatedElements;
-        if (loggedElements.length() > maxLogLength) {
-            log.warn("Source XML elements string length ({}) exceeds log limit ({}) for User={}, Key={}:{}:{}",
-                    loggedElements.length(), maxLogLength, email, table, column, module);
-            loggedElements = loggedElements.substring(0, maxLogLength) + "\n... (truncated)";
+        // 3. <<< Generate resolved elements string using the FULL replacement map >>>
+        List<String> resolvedElementsList = new ArrayList<>();
+        if (sourceElements != null && !sourceElements.isEmpty() && replacementsForElements != null && !replacementsForElements.isEmpty()) {
+            for (String originalElement : sourceElements) {
+                String currentResolvedElement = originalElement;
+                // Apply ALL replacements (PKs and FKs) relevant to this element
+                for (Map.Entry<String, String> replacementEntry : replacementsForElements.entrySet()) {
+                    String placeholderOrRef = replacementEntry.getKey();
+                    String resolvedValue = replacementEntry.getValue();
+                    String placeholderInQuotes = "\"" + placeholderOrRef + "\""; // e.g., "T:C:M:Lid" or "REF:{T:C:M:Lid}"
+                    String resolvedInQuotes = "\"" + resolvedValue + "\"";      // e.g., "T:C:M:Value"
+                    currentResolvedElement = currentResolvedElement.replace(placeholderInQuotes, resolvedInQuotes);
+                }
+                resolvedElementsList.add(currentResolvedElement);
+            }
         }
+        String concatenatedResolvedElements = resolvedElementsList.stream().collect(Collectors.joining("\n"));
+        // --- End generating resolved elements ---
 
-        log.debug("Logging consolidated LSK range: User={}, Key={}:{}:{}, Range=[{}-{}], Elements:\n{}",
-                email, table, column, module, startVal, endVal, loggedElements);
+        // Truncate for logging display if needed
+        int maxLogLength = 4000; // Or adjust as needed
+        String loggedSource = concatenatedSourceElements.length() > maxLogLength ? concatenatedSourceElements.substring(0, maxLogLength) + "..." : concatenatedSourceElements;
+        String loggedResolved = concatenatedResolvedElements.length() > maxLogLength ? concatenatedResolvedElements.substring(0, maxLogLength) + "..." : concatenatedResolvedElements;
+        String loggedMapping = mappingJsonString.length() > maxLogLength ? mappingJsonString.substring(0, maxLogLength) + "..." : mappingJsonString;
 
+        log.debug("Logging LSK Event: User={}, Key={}:{}:{}, Range=[{}-{}], Mapping: {}, Source Elements:\n{}, Resolved Elements:\n{}",
+                email, table, column, module, startVal, endVal, loggedMapping, loggedSource, loggedResolved);
+
+        // 4. Insert into Database
         try (PreparedStatement logStatement = conn.prepareStatement(INSERT_LOG_SQL)) {
-            logStatement.setString(1, email);
-            logStatement.setString(2, table);
-            logStatement.setString(3, column);
-            logStatement.setString(4, module);
-            logStatement.setLong(5, startVal);
-            logStatement.setLong(6, endVal);
-            logStatement.setString(7, concatenatedElements); // Store full string
+            int i = 1;
+            logStatement.setString(i++, email);
+            logStatement.setString(i++, table);
+            logStatement.setString(i++, column);
+            logStatement.setString(i++, module);
+            logStatement.setLong(i++, startVal);
+            logStatement.setLong(i++, endVal);
+            logStatement.setString(i++, mappingJsonString);             // Col 7: placeholder_mapping (PKs only)
+            logStatement.setString(i++, concatenatedSourceElements);   // Col 8: source_xml_elements
+            logStatement.setString(i++, concatenatedResolvedElements); // Col 9: resolved_xml_elements (PKs & FKs resolved)
 
             int rowsAffected = logStatement.executeUpdate();
             if (rowsAffected != 1) {
-                log.error("Failed to insert consolidated log record! Rows affected: {} for User={}, Key={}:{}:{}",
-                        rowsAffected, email, table, column, module);
+                log.error("Failed log insert! Rows affected: {} for Key={}:{}:{}", rowsAffected, table, column, module);
                 throw new SQLException("Failed log insert, rows affected: " + rowsAffected);
             }
-            log.trace("Successfully inserted consolidated log record for {}:{}:{}.", table, column, module);
+            log.trace("Successfully inserted log record for {}:{}:{}.", table, column, module);
         } catch (SQLException e) {
-            log.error("SQL Exception inserting consolidated log for User={}, Key={}:{}:{}: {}",
-                    email, table, column, module, e.getMessage(), e);
+            log.error("SQL Exception inserting log for Key={}:{}:{}: {}", table, column, module, e.getMessage(), e);
             throw e;
         }
     }

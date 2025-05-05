@@ -1,14 +1,14 @@
 package com.budra.uvh.controllers;
 
 import com.budra.uvh.config.SecretsManager;
-import com.budra.uvh.dto.AuthResponse; // Your existing DTO for plugin response
+import com.budra.uvh.dto.AuthResponse;
 import com.budra.uvh.dto.GitHubCodeRequest;
 import com.budra.uvh.dto.GitHubTokenResponse;
 import com.budra.uvh.dto.GitHubUserResponse;
-import com.budra.uvh.dto.GitHubEmailResponse; // <<< Import for email DTO
+import com.budra.uvh.dto.GitHubEmailResponse;
 import com.budra.uvh.dto.MessageResponse;
-import com.fasterxml.jackson.core.type.TypeReference; // <<< Import for List<T>
-import com.fasterxml.jackson.databind.ObjectMapper; // Using Jackson
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
@@ -25,35 +25,34 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
-import java.util.List; // <<< Import for email list
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-@Path("/auth/github") // Defines the base path for this resource
-@Produces(MediaType.APPLICATION_JSON) // Default response type is JSON
+@Path("/auth/github")
+@Produces(MediaType.APPLICATION_JSON)
 public class GitHubAuthResource {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubAuthResource.class);
     private static final String GITHUB_TOKEN_ENDPOINT = "https://github.com/login/oauth/access_token";
     private static final String GITHUB_USER_ENDPOINT = "https://api.github.com/user";
-    private static final String GITHUB_EMAILS_ENDPOINT = "https://api.github.com/user/emails"; // <<< New Endpoint URL
+    private static final String GITHUB_EMAILS_ENDPOINT = "https://api.github.com/user/emails";
 
-    private final HttpClient httpClient; // Reusable HTTP client
-    private final ObjectMapper objectMapper; // Reusable JSON mapper
+    private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
 
-    // Constructor: Initialize reusable objects
     public GitHubAuthResource() {
         log.debug("GitHubAuthResource instance created.");
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10)) // Set connection timeout
-                .followRedirects(HttpClient.Redirect.NEVER) // Don't follow redirects automatically
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
-        this.objectMapper = new ObjectMapper(); // Create a new ObjectMapper instance
+        this.objectMapper = new ObjectMapper();
     }
 
-    @POST // Handles POST requests
-    @Path("/exchange-code") // Handles requests to /api/auth/github/exchange-code
-    @Consumes(MediaType.APPLICATION_JSON) // Expects JSON input
+    @POST
+    @Path("/exchange-code")
+    @Consumes(MediaType.APPLICATION_JSON)
     public Response exchangeCode(GitHubCodeRequest request) {
         log.info("Received request to exchange GitHub code.");
 
@@ -78,7 +77,7 @@ public class GitHubAuthResource {
         }
 
         try {
-            // --- Step 1: Exchange authorization code for GitHub access token ---
+            // --- Exchange authorization code for GitHub access token ---
             log.debug("Attempting to fetch GitHub access token...");
             GitHubTokenResponse tokenResponse = fetchGitHubAccessToken(receivedCode, clientId, clientSecret);
 
@@ -100,20 +99,20 @@ public class GitHubAuthResource {
             String githubAccessToken = tokenResponse.accessToken;
             log.info("Successfully received GitHub access token.");
 
-            // --- Step 2: Determine User Identifier (Prioritize Email) ---
+            // --- Determine User Identifier (Prioritize Email) ---
             String userIdentifier = null;
-            Long githubUserId = null; // Store ID separately
-            String githubLogin = null; // Store login for logging
+            Long githubUserId = null;
+            String githubLogin = null;
 
-            // 2a. Try fetching basic user info (might contain public email and ID)
+            // Try fetching basic user info (might contain public email and ID)
             log.debug("Attempting to fetch basic user info from GitHub API (/user)...");
             GitHubUserResponse userInfo = fetchGitHubUserInfo(githubAccessToken);
             if (userInfo != null) {
-                githubUserId = userInfo.id; // Store ID regardless
+                githubUserId = userInfo.id;
                 githubLogin = userInfo.login;
                 if (userInfo.email != null && !userInfo.email.isEmpty()) {
                     log.info("Found email directly from /user endpoint: {}", userInfo.email);
-                    userIdentifier = userInfo.email; // Use public email if present
+                    userIdentifier = userInfo.email;
                 } else {
                     log.info("Email field was null or empty in /user response.");
                 }
@@ -121,7 +120,7 @@ public class GitHubAuthResource {
                 log.warn("Failed to fetch basic user info from /user endpoint. Will proceed to check /user/emails.");
             }
 
-            // 2b. If email wasn't found via /user, explicitly check /user/emails
+            // If email wasn't found via /user, explicitly check /user/emails
             if (userIdentifier == null) {
                 log.info("Checking /user/emails endpoint for primary, verified email...");
                 List<GitHubEmailResponse> emails = fetchGitHubEmails(githubAccessToken);
@@ -137,14 +136,13 @@ public class GitHubAuthResource {
                     }
                     if (userIdentifier == null) {
                         log.warn("No primary, verified email found in list from /user/emails endpoint.");
-                        // Optional: Could add a second loop here to find *any* verified email as a fallback
                     }
                 } else {
                     log.warn("Failed to fetch email list from /user/emails endpoint (returned null).");
                 }
             }
 
-            // 2c. If still no email, fall back to GitHub ID (if available)
+            // If still no email, fall back to GitHub ID (if available)
             if (userIdentifier == null) {
                 if (githubUserId != null) {
                     userIdentifier = "github_id:" + githubUserId;
@@ -158,15 +156,15 @@ public class GitHubAuthResource {
                 }
             }
 
-            // --- Step 3: Generate *Backend* Session Token ---
+            // --- Generate *Backend* Session Token ---
             String backendToken = UUID.randomUUID().toString();
 
-            // --- Step 4: Store Session Mapping ---
+            // --- Store Session Mapping ---
             AuthResource.getActiveSessions().put(backendToken, userIdentifier);
             log.info("Generated backend session token and stored mapping for user identifier '{}'", userIdentifier);
             log.debug("Current active sessions map size: {}", AuthResource.getActiveSessions().size());
 
-            // --- Step 5: Return Backend Token to Plugin ---
+            // --- Return Backend Token to Plugin ---
             log.info("Authentication successful. Returning backend token to plugin.");
             return Response.ok(new AuthResponse("Authentication successful.", backendToken)).build();
 
@@ -189,7 +187,7 @@ public class GitHubAuthResource {
         }
     }
 
-    // --- Private Helper Methods ---
+    // --- Helper Methods ---
 
     /**
      * Calls GitHub's token endpoint to exchange an authorization code for an access token.

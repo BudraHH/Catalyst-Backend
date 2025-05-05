@@ -1,26 +1,22 @@
 package com.budra.uvh.controllers;
 
-// Import the service dependency
+import com.budra.uvh.dto.ApiResponse;
 import com.budra.uvh.service.LskResolution;
 
-// JAX-RS Annotations and Classes
-import jakarta.ws.rs.*; // Includes @Path, @POST, @Consumes, @Produces, @HeaderParam
+import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
-// Import the new Request DTO for the JSON body
 import com.budra.uvh.dto.ResolveRequest;
 
-// Custom Exception Imports
 import com.budra.uvh.exception.LskGenerationException;
 import com.budra.uvh.exception.PlaceholderFormatException;
 import com.budra.uvh.exception.ReferenceResolutionException;
 
-// Logging Imports
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.SQLException; // Import SQLException if thrown by service layer
+import java.sql.SQLException;
 
 /**
  * Handles requests related to Logical Seed Key resolution.
@@ -54,20 +50,18 @@ public class LskResource {
      * @param resolveRequest The request body parsed from JSON into a ResolveRequest DTO.
      * @return JAX-RS Response containing either the resolved XML or an error message.
      */
-    @POST // Handles POST requests
+    @POST
     @Path("/resolve") // Endpoint path: /api/logical-seed-key/resolve
-    @Consumes(MediaType.APPLICATION_JSON) // <<< CHANGED: Expects JSON input
-    @Produces(MediaType.APPLICATION_JSON) // Returns JSON output
-    public Response processLskResolution( // Renamed method for clarity
-                                          @HeaderParam("Authorization") String authorizationHeader,
-                                          // <<< CHANGED: Parameter now accepts the JSON body mapped to ResolveRequest DTO
-                                          ResolveRequest resolveRequest)
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response processLskResolution(
+                                          @HeaderParam("Authorization") String authorizationHeader,ResolveRequest resolveRequest)
     {
         log.info("Received POST request on /api/logical-seed-key/resolve");
 
-        // --- Step 1: Authorization ---
+        // --- Authorization ---
         String userAccessToken = null;
-        final String bearerPrefix = "Bearer "; // Define prefix
+        final String bearerPrefix = "Bearer ";
 
         // Extract the token from the "Authorization: Bearer <token>" header
         if (authorizationHeader != null && authorizationHeader.startsWith(bearerPrefix)) {
@@ -77,7 +71,7 @@ public class LskResource {
             log.warn("Authorization header is missing or is not in the expected Bearer format.");
             // Return 401 Unauthorized if token is missing or malformed
             return Response.status(Response.Status.UNAUTHORIZED)
-                    .entity(new ApiResponse("Authorization header with Bearer token is required.")) // Use the inner ApiResponse class
+                    .entity(new ApiResponse("Authorization header with Bearer token is required."))
                     .type(MediaType.APPLICATION_JSON).build();
         }
 
@@ -96,7 +90,7 @@ public class LskResource {
         String emailForLogging = userIdentifier; // Assuming identifier is suitable for logging
 
 
-        // --- Step 2: Input Validation ---
+        // --- Input Validation ---
         // Check internal dependency (should have been caught by constructor, but good practice)
         if (this.lskResolution == null) {
             log.error("Critical internal error: lskResolution field is null within request handler method!");
@@ -106,8 +100,26 @@ public class LskResource {
                     .build();
         }
 
-        // Validate the JSON request body and the required 'xmlContent' field
-        if (resolveRequest == null || resolveRequest.getXmlContent() == null || resolveRequest.getXmlContent().trim().isEmpty()) {
+        // Validate the JSON request body
+
+        if (resolveRequest == null) {
+            log.warn("Received request with missing JSON body.");
+            // Return 400 Bad Request if input is invalid
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(new ApiResponse("Request body must be a JSON object ."))
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
+        }
+        if (resolveRequest.getModuleName() == null || resolveRequest.getModuleName().trim().isEmpty()) {
+            log.warn("Received request with missing or empty 'xmlContent' in JSON body.");
+            // Return 400 Bad Request if input is invalid
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity(new ApiResponse("Request body must be a JSON object with a non-empty 'moduleName' field."))
+                    .type(MediaType.APPLICATION_JSON)
+                    .build();
+        }
+
+        if (resolveRequest.getXmlContent() == null || resolveRequest.getXmlContent().trim().isEmpty()) {
             log.warn("Received request with missing or empty 'xmlContent' in JSON body.");
             // Return 400 Bad Request if input is invalid
             return Response.status(Response.Status.BAD_REQUEST)
@@ -115,14 +127,13 @@ public class LskResource {
                     .type(MediaType.APPLICATION_JSON)
                     .build();
         }
-        // Get the XML content from the validated DTO
+
+        String moduleName = resolveRequest.getModuleName();
         String inputXml = resolveRequest.getXmlContent();
 
-
-        // --- Step 3: Call Business Logic (Service Layer) ---
         try {
             // Pass the XML content and the validated user identifier (email/github_id) to the service
-            String resolvedXml = this.lskResolution.processAndResolveXml(inputXml, emailForLogging);
+            String resolvedXml = this.lskResolution.processAndResolveXml(moduleName,inputXml, emailForLogging);
 
             log.info("LSK and Reference resolution successful for user: {}", emailForLogging);
             // Return 200 OK with the resolved XML in the 'data' field
@@ -131,7 +142,7 @@ public class LskResource {
                     .type(MediaType.APPLICATION_JSON)
                     .build();
 
-            // --- Step 4: Handle Specific Expected Errors from Service ---
+            // --- Handle Specific Expected Errors from Service ---
         } catch (PlaceholderFormatException e) {
             log.warn("Placeholder format error during resolution for user {}: {}", emailForLogging, e.getMessage());
             return Response.status(Response.Status.BAD_REQUEST) // 400 Bad Request for format issues
@@ -154,7 +165,7 @@ public class LskResource {
                     .type(MediaType.APPLICATION_JSON)
                     .build();
 
-            // --- Step 5: Handle Unexpected Errors ---
+            // --- Handle Unexpected Errors ---
         } catch (Exception e) {
             log.error("Unexpected internal server error during LSK resolution for user {}: {}", emailForLogging, e.getMessage(), e);
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR) // 500 Internal Server Error
@@ -169,34 +180,5 @@ public class LskResource {
      * Inner class defining the structure for JSON responses from this endpoint.
      * Matches the DTO expected by the IntelliJ plugin.
      */
-    public static class ApiResponse {
-        public String message;
-        public String data;
-        public String error;
 
-        // Constructor for success responses
-        public ApiResponse(String message, String data) {
-            this.message = message;
-            this.data = data;
-            this.error = null;
-        }
-
-        // Constructor for error responses
-        public ApiResponse(String error) {
-            this.message = null;
-            this.data = null;
-            this.error = error;
-        }
-
-        // Default constructor (needed for some frameworks/libraries)
-        public ApiResponse() {}
-
-        // Getters and Setters (optional but good practice)
-        public String getMessage() { return message; }
-        public void setMessage(String message) { this.message = message; }
-        public String getData() { return data; }
-        public void setData(String data) { this.data = data; }
-        public String getError() { return error; }
-        public void setError(String error) { this.error = error; }
-    }
 }

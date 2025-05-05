@@ -1,6 +1,6 @@
 package com.budra.uvh.model;
 
-import com.budra.uvh.exception.LskGenerationException; // Although not thrown here, keep for consistency if desired
+import com.budra.uvh.exception.LskGenerationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,11 +10,9 @@ import java.util.Objects;
 public class LskRepository {
     private static final Logger log = LoggerFactory.getLogger(LskRepository.class);
 
-    // --- UPDATED SQL: Include module_name in WHERE clause ---
     private static final String SELECT_MAX_VALUE_SQL =
-            "SELECT MAX(end_value) FROM LskResolutionLog WHERE table_name = ? AND column_name = ? AND module_name = ?"; // Added module_name filter
+            "SELECT MAX(end_value) FROM LskResolutionLog WHERE table_name = ? AND column_name = ? AND module_name = ?";
 
-    // --- UPDATED SQL: Advisory lock keys should distinguish by module ---
     // Using a combined hash for the second key to fit into the 2-integer function
     private static final String ACQUIRE_ADVISORY_LOCK_SQL = "SELECT pg_advisory_xact_lock(?, ?)";
 
@@ -27,9 +25,9 @@ public class LskRepository {
 
         if (tableName == null || tableName.trim().isEmpty()) throw new IllegalArgumentException("Table name cannot be null or empty.");
         if (columnName == null || columnName.trim().isEmpty()) throw new IllegalArgumentException("Column name cannot be null or empty.");
-        if (moduleName == null || moduleName.trim().isEmpty()) throw new IllegalArgumentException("Module name cannot be null or empty."); // <<< ADDED check
-
-        long currentMaxValue = 0; // Start sequence at 1 if no previous logs exist for this combo
+        if (moduleName == null || moduleName.trim().isEmpty()) throw new IllegalArgumentException("Module name cannot be null or empty.");
+        // Start sequence at 1 if no previous logs exist for this combo
+        long currentMaxValue = 0;
 
 
         int lockKey1 = Objects.hash("LSK_NEXT_VAL_LOCK_V2", tableName);
@@ -56,16 +54,15 @@ public class LskRepository {
             ResultSet rs = selectStatement.executeQuery();
             if (rs.next()) {
                 long maxVal = rs.getLong(1);
-                if (!rs.wasNull()) { // Check if MAX() found a non-NULL value
+                if (!rs.wasNull()) {
                     currentMaxValue = maxVal;
                 }
-                // else currentMaxValue remains 0
             }
             log.debug("Current MAX(end_value) found for {}:{}:{} is {}", tableName, columnName, moduleName, currentMaxValue); // Update log
 
         } catch (SQLException e) {
             log.error("SQL Exception querying MAX(end_value) for {}:{}:{}: {}", tableName, columnName, moduleName, e.getMessage()); // Update log
-            throw e; // Propagate error, transaction will rollback
+            throw e;
         }
 
         // --- Calculate and Return Next Value ---

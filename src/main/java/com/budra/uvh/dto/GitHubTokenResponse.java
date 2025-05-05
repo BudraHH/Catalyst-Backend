@@ -7,10 +7,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * DTO for parsing the response from GitHub's /login/oauth/access_token endpoint.
  */
-@JsonIgnoreProperties(ignoreUnknown = true) // Important: GitHub might add fields
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class GitHubTokenResponse {
 
-    @JsonProperty("access_token") // Maps the JSON key "access_token" to this field
+    @JsonProperty("access_token")
     public String accessToken;
 
     @JsonProperty("scope")
@@ -29,11 +29,5 @@ public class GitHubTokenResponse {
     @JsonProperty("error_uri")
     public String errorUri;
 
-    // Default constructor
     public GitHubTokenResponse() {}
-
-    // You can add Getters/Setters if preferred over public fields
-    // public String getAccessToken() { return accessToken; }
-    // public void setAccessToken(String accessToken) { this.accessToken = accessToken; }
-    // ... etc ...
 }

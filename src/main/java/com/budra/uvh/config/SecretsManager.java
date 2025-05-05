@@ -7,14 +7,12 @@ public class SecretsManager {
 
     private static final Logger log = LoggerFactory.getLogger(SecretsManager.class);
 
-    // Define the names of the environment variables you will set
     private static final String GITHUB_CLIENT_ID_ENV_VAR = "UVH_GITHUB_CLIENT_ID";
     private static final String GITHUB_CLIENT_SECRET_ENV_VAR = "UVH_GITHUB_CLIENT_SECRET ";
 
     private static String githubClientId = null;
     private static String githubClientSecret = null;
 
-    // Static initializer block: runs once when the class is first loaded by the JVM
     static {
         log.info("Loading secrets from environment variables...");
 
@@ -22,8 +20,6 @@ public class SecretsManager {
         githubClientId = System.getenv(GITHUB_CLIENT_ID_ENV_VAR);
         if (githubClientId == null || githubClientId.trim().isEmpty()) {
             log.error("!!! CRITICAL: GitHub Client ID not found in environment variable '{}'. GitHub authentication will fail.", GITHUB_CLIENT_ID_ENV_VAR);
-            // Consider throwing an exception here if startup should halt without this config:
-            // throw new IllegalStateException("Missing required environment variable: " + GITHUB_CLIENT_ID_ENV_VAR);
         } else {
             log.info("Loaded GITHUB_CLIENT_ID successfully from environment variable '{}'.", GITHUB_CLIENT_ID_ENV_VAR);
         }
@@ -32,10 +28,7 @@ public class SecretsManager {
         githubClientSecret = System.getenv(GITHUB_CLIENT_SECRET_ENV_VAR);
         if (githubClientSecret == null || githubClientSecret.trim().isEmpty()) {
             log.error("!!! CRITICAL: GitHub Client Secret not found in environment variable '{}'. GitHub authentication will fail.", GITHUB_CLIENT_SECRET_ENV_VAR);
-            // Consider throwing an exception here:
-            // throw new IllegalStateException("Missing required environment variable: " + GITHUB_CLIENT_SECRET_ENV_VAR);
         } else {
-            // Avoid logging the actual secret value!
             log.info("Loaded GITHUB_CLIENT_SECRET successfully from environment variable '{}'.", GITHUB_CLIENT_SECRET_ENV_VAR);
         }
     }
@@ -64,6 +57,5 @@ public class SecretsManager {
         return githubClientSecret;
     }
 
-    // Private constructor to prevent instantiation of this utility class
     private SecretsManager() {}
 }

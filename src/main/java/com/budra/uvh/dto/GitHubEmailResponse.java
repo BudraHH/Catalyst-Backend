@@ -18,7 +18,7 @@ public class GitHubEmailResponse {
     @JsonProperty("verified")
     public boolean verified;
 
-    @JsonProperty("visibility") // Can be 'public' or 'private'
+    @JsonProperty("visibility")
     public String visibility;
 
     // Default constructor
